@@ -1,0 +1,115 @@
+# Release gate ledger — PS2 Classics for Mac 1.0
+
+This ledger is the authoritative list of what is **closed locally** and what
+remains **open** for a final 1.0. It is deliberately explicit: a passing local
+suite is not evidence of console or client-hardware behaviour, and this build is
+therefore labelled a **1.0 release candidate**.
+
+Artifact under evaluation: `dist/PS2 Classics for Mac 1.0 RC6.zip`
+(`CFBundleShortVersionString` 1.0.0, `CFBundleVersion` 15, Universal
+`arm64` + `x86_64`, minimum macOS 12.0). Exact hashes are recorded in
+`dist/release-manifest-1.0-RC6.json` and `docs/VALIDATION.md`. RC5 build 14, RC4 build 13, RC3 build 12,
+RC2 build 11, RC1 build 10 and all earlier archives are preserved.
+
+## Gate history
+
+- RC1 build 10 was reopened on two reproduced session failures (an ordinary
+  saved CONFIG-library selection crashed the loader; one malformed queue
+  element discarded the whole queue with no backup) and closed in RC2 build 11.
+- RC2 build 11 was reopened on two further reproduced issues: a salvaged queue
+  duplicate could share an identifier with a valid row (so row actions could
+  affect the wrong or multiple rows), and changing the artwork folder left
+  stale results. RC3 build 12 fixes both structurally and adds the regressions
+  listed below.
+- RC3 build 12 was reopened on one reproduced issue: editing a game ID or
+  removing a disc while a CONFIG/artwork scan was pending left the search
+  control disabled. RC4 build 13 fixes the completion lifecycle and adds
+  completion-coordinated regressions; the gate is closed again for RC4.
+
+## Closed local gates
+
+| Gate | Status | Evidence |
+| --- | --- | --- |
+| No known data-loss defect | Closed (RC3) | Structural `SessionStore` decode; heterogeneous queue members; backup-or-lock on every unclean load; `SessionStoreTests`, `StudioModelTests` round trip and damaged-queue tests |
+| Queue identifiers are unique after salvage | Closed (RC3) | One normalization path; decoded entries preferred; evidence cleared on reassignment; `SessionStoreTests` duplicate/mixed-queue tests; `testRemovingOrRetryingRecoveredDuplicateRowAffectsOnlyThatRow` |
+| No known persistence/crash-on-load defect | Closed (RC2) | `testConfigLibraryURLRoundTripsThroughProductionEncoder`, `testConfigLibraryNilNullAndWrongTypeAreHandled`, `testURLFromSessionStringValidates`; full-model encoder/loader round trip with every optional setting |
+| No known corruption/overwrite defect | Closed | Exclusive publication, existing-destination refusal, `PackageBuilderConfigTests` destination tests |
+| No known operation-ownership defect | Closed | Token held until helper exits; import contention tests |
+| Search results cannot go stale | Closed (RC3) | Folder/generation/project ownership for CONFIG and artwork searches; `StudioModelTests` ownership tests; live GUI folder A→B check |
+| A search always finishes its lifecycle | Closed (RC4) | Owned-generation completion clears busy state and never publishes stale matches; `StudioModelTests` game-ID-edit/disc-removal/older-vs-newer/dismiss/replace/error tests await the real handler |
+| Optional audio conversion is validated | Closed locally (RC6) | Common-audio normalization, format/duration/channel limits, cancellation, no overwrite, independent eight-format decoding and spectral checks. Console and client runtime acceptance remain external |
+| Migration and recovery regressions | Closed | Legacy/mixed/malformed session tests; genuine recovery, stale attempt, missing/foreign evidence tests |
+| Required automated suites | Closed | `scripts/validate-release.sh`: core + app tests, backend/formats/package/recovery suites, CHD matrix |
+| App-level regression checks | Closed automatically (RC6) | Actual app-model tests cover ownership, contention, cancellation, recovery and sound selection. Earlier isolated GUI checks remain historical evidence; no new manual UI acceptance is claimed |
+| Bounded record reads | Closed | `BoundedFile` used by attempt/report/workspace/cache/profile readers |
+| Filesystem publication safety | Closed (RC5) | Unsupported exclusive publication fails closed before work; no unsafe placeholder fallback. Direct exFAT build is outside supported scope; physical USB acceptance remains open |
+| Bundle/archive/resource agreement | Closed | `scripts/release-manifest.py` on the extracted archive |
+| Supported-scope limitations visible | Closed | README, USER_GUIDE, PROJECT_PLAN, RELEASE_NOTES, FEATURE_LEDGER, DEFERRED_WORK |
+
+## Open external gates
+
+Each item names what is needed and who can provide it. None can be closed by
+local development alone, and none is waived.
+
+1. **Matching production support assets and PS3 behaviour.** Needed: the real
+   16-byte klicensee, matching RAP, `PS3LOGO.DAT`, blank `SCEVMC0.VMC` and the
+   matching content ID, plus a compatible modified PS3. Verify install, launch,
+   save/load. Owner: product owner + test console.
+2. **Multi-disc console behaviour (if multi-disc is part of the 1.0 claim).**
+   Needed: Xenosaga II disc switching in both directions and save/load across
+   discs on the console. Owner: product owner + test console.
+3. **Intel Monterey MacBook Air and M4 Mac mini runtime.** Needed: launch the
+   assembled app on each client machine, build one small package, record OS
+   version/build, time and observed memory. Cross-compilation is not runtime
+   acceptance. Owner: product owner + the two client Macs.
+4. **External-volume acceptance.** Needed: build to a real external USB volume,
+   confirm large-file behaviour on its filesystem and confirm interrupted/
+   disconnected destinations fail safely. Owner: product owner + an external
+   drive.
+5. **Distribution signing/notarization.** Needed: the chosen channel's
+   Developer ID certificate, hardened-runtime signing and notarization. Owner:
+   product owner + credentials.
+6. **Public licence and corresponding-source decision.** Needed: the owner's
+   licence choice and a complete corresponding-source package for the bundled
+   GPLv3/MIT/BSD/LGPL components. Owner: product owner (do not choose on their
+   behalf).
+
+## How to close the external gates
+
+Follow [CLIENT_ACCEPTANCE_CHECKLIST.md](CLIENT_ACCEPTANCE_CHECKLIST.md). Record
+each result against the exact artifact hash above. If every external gate
+passes on this artifact, it may be promoted from release candidate to 1.0 with
+no code change; otherwise the artifact stays a candidate and the findings feed
+the next build.
+
+## Acceptance results template (RC6)
+
+Copy this into a new record and fill it in on the actual hardware. Every row is
+performed on **this exact artifact**:
+
+```
+Artifact: dist/PS2 Classics for Mac 1.0 RC6.zip
+SHA-256: copy archiveSHA256 from dist/release-manifest-1.0-RC6.json
+Version/build: 1.0.0 / 15
+
+[ ] PS3 install        result:            title/disc/CID used:
+[ ] PS3 launch         result:            observed:
+[ ] PS3 encoded audio playback  result:
+[ ] PS3 save/load      result:            observed:
+[ ] Xenosaga II disc 1 -> 2   result:      observed:
+[ ] Xenosaga II disc 2 -> 1   result:      observed:
+[ ] Intel MacBook Air (2017) runtime   OS/build:            result:
+[ ] M4 Mac mini runtime                OS/build:            result:
+[ ] Standalone launch (no dev tools)   result:
+[ ] External USB volume large-file     filesystem/size:     result:
+[ ] External drive disconnect mid-build result:             output published?:
+[ ] Developer ID signing               result:
+[ ] Notarization                       result:
+[ ] Owner licence decision             recorded in:
+[ ] Corresponding-source package       location:
+```
+
+Signature integrity checked locally is **not** Developer ID/notarization
+acceptance; cross-compilation is **not** runtime acceptance.
+
+Record all client acceptance against the RC6 manifest hash; earlier candidate hashes do not identify this build.

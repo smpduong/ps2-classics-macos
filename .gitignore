@@ -1,0 +1,34 @@
+.DS_Store
+.build/
+.swiftpm/
+dist/
+*.iso
+*.bin
+*.cue
+*.chd
+*.pkg
+*.enc
+*.vmc
+*.vme
+*.rap
+*.rif
+*.key
+/ROMS/
+/test-results/
+
+/Local Projects/
+__pycache__/
+*.pyc
+
+# Local agent state and historical machine-specific handoffs
+/.freebuff/
+/.opencode/
+/.codex/
+/docs/*HANDOFF*
+/docs/RC2_PRIORITIES_AND_FEATURES_2026-09-22.md
+.env
+.env.*
+*.p12
+*.p8
+*.mobileprovision
+._*
