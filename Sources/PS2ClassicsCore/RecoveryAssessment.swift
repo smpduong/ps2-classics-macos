@@ -153,6 +153,7 @@ public struct QueuedJobIdentity: Codable, Equatable, Sendable {
                              "logo": path(project.support.logo), "card": path(project.support.card)]
         self.assetPaths = ["icon": path(project.icon), "background": path(project.background),
                            "sound": path(project.sound)]
+        if let manual = project.manual { self.assetPaths["manual"] = path(manual) }
     }
 
     static func standardizing(_ path: String) -> String {
@@ -207,7 +208,7 @@ public struct QueuedJobIdentity: Codable, Equatable, Sendable {
             return "the completion record's support files do not match this queued job"
         }
         guard record.assetPaths == assetPaths else {
-            return "the completion record's artwork or sound does not match this queued job"
+            return "the completion record's artwork, sound or manual does not match this queued job"
         }
         return nil
     }

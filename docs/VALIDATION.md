@@ -1,3 +1,15 @@
+# RC8 / RC7 validation — 2026-09-22
+
+RC7/build 16 closes the approved GPL-3.0-only license work, local Git baseline, strict no-skip release validation and fresh extracted-source rebuild. Its preserved evidence is `test-results/v16-release-checks.json`, `test-results/v16-clean-source.json` and `dist/release-manifest-1.0-RC7.json`.
+
+RC8/build 17 adds whole-card backup/restore, native manual pages, optional HTTPS catalog import and FTP transfer with read-back verification. New regression suites are `MemoryCardBackupTests`, `SoftwareManualTests`, `NetworkWorkflowTests`, with saved-session coverage extended to manuals. The FTP suite uses only a disposable loopback server and synthetic support assets. It checks actual package bytes, remote-file preservation, corrupt/truncated/extra data, refused directories and cancellation. Manual integration builds single/multi-disc packages, extracts their actual indexed pages, compares report hashes and independently decodes BC1 through FFmpeg.
+
+The RC8 full Swift suite contains 162 tests (131 core and 31 app), with zero failures and no skipped required tests in the strict run. The strict gate records final evidence in `test-results/v17-release-checks.json`, including the fresh extracted-source build, and exact artifact hashes in `dist/release-manifest-1.0-RC8.json`. A receipt is valid only when its top-level `passed` is true. Missing tools or skipped required Swift tests fail the gate. The four local ISO fixtures remain read-only; new optional-feature validation uses generated fixtures. RC5's recorded real-ISO evidence is historical and is not relabelled as a new RC8 run.
+
+Manual format reference: pinned pop-fe2 commit `2afb9a3544e26ec1927f6389857240a0fe4bc205`, `pop-fe2.py` manual-generation section; no console assets or code were copied. Output consists of `USRDIR/CONTENT/manual.idx` and numbered pages with 960×768 little-endian dimensions plus BC1 blocks. The native encoder is original implementation. Actual PS3 manual display, console FTP compatibility, client Mac runtime, physical USB and signing/notarization remain unverified. The generic catalog importer has no approved public feed; no live third-party feed acceptance is claimed.
+
+## Historical records (capability and license statements below describe their dated candidate)
+
 # Validation records — current 1.0 RC6
 
 Automated completion pass, 2026-09-22. Version 1.0.0/build 15, native Universal

@@ -82,6 +82,7 @@ public struct GameProject: Codable, Equatable, Sendable {
     public var icon: URL?
     public var background: URL?
     public var sound: URL?
+    public var manual: URL?
     public var cropArtwork = false
     public var output: URL?
     public init() {}

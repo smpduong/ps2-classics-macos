@@ -4,11 +4,13 @@
 
 Native macOS 12+ PS2 Classics application for the client's 2017 Intel MacBook Air and 2024 M4 Mac mini. One Universal app; no Wine or developer tools needed by end users. Confirm actual installed OS versions during client acceptance. This folder is the staging ground authorized by the user.
 
-## Implemented — 1.0 release candidate 6
+## Implemented — 1.0 release candidate 8
 
 The core local workflow is complete: inspect ISO/BIN/CUE/CHD → identify game → select per-disc CONFIG/artwork → prepare and encrypt → create metadata, EDAT and cards → build and read back PKG → report. Saved projects, serial persistent queue, cancellation/retry, image decryption and memory-card conversion are available. Native tests, reference comparisons, UI checks and all four user-supplied ISOs have passed their documented local checks. Version 0.4 added bundled CHD import, local CONFIG matching, setup retention and local diagnostic export. Version 0.5 added numbered multi-disc image profiles with keyless detection and read-only verification. Version 0.6 added ownership-safe cleanup, validated payload sizes, a unified image-tools operation state and a bounded verified stage cache. Version 0.7 makes cache deletion and eviction fail-closed behind proven ownership with the lock held throughout, binds fingerprints and cache entries to the exact snapshot bytes and crypto parameters (legacy caches are never trusted), gives cache writers exclusive ownership, checkpoints every verified stage, integrates package builds and all utility entry points into one operation slot with real progress/cancel, and confirms recovered jobs only against their own completion records. Version 0.8 makes selected CONFIG failures strict instead of silently omitted, binds recovery to a queue-owned identity persisted at enqueue time, enforces the unchanged-source invariant on reused stages as well as fresh ones, and makes recovery's digest pass cancellable with honest progress. Version 0.9 finishes operation ownership at the real app entry points, normalizes user cancellation during package verification, and upgrades recovery to a durable build-attempt fingerprint. The 1.0 line adds backward-compatible session migration with a recoverable backup, holds the operation token until a replaced import's helper stops, converts every record reader to a single bounded read, and (RC2) makes session decoding structural — typed scalar settings and member-by-member queue arrays so one damaged entry can never discard the queue or crash on an ordinary saved CONFIG-library selection. RC2 also adds local CONFIG-library availability/refresh/provenance, optional local artwork matching by exact game ID, and exact CUE preflight diagnostics. RC3 normalizes every recovered queue entry to a unique identifier (preferring fully-decoded entries and clearing ambiguous recovery evidence) and gives the artwork and CONFIG searches explicit folder/generation/project ownership so a superseded or dismissed search can never overwrite newer results. RC4 guarantees a search always finishes its own lifecycle when its disc is edited or removed mid-scan, and adds an optional WAV→ATRAC3 audio conversion using a bundled native (atracdenc-based) helper.
 
 RC5 corrected audio completion ownership, malformed WAV acceptance and unsafe filesystem publication. RC6 adds system decoding/resampling for common audio formats, independently checked by a second decoder, and connects the optional ROM/audio release gates.
+
+RC7 applies the approved GPL-3.0-only policy, records a local Git baseline, requires every automated release gate, and rebuilds the extracted source archive. RC8 adds copy-first card backup/restore, native PDF/image manuals, opt-in checksum-verified HTTPS CONFIG catalogs and FTP package transfer with read-back verification. These additions are locally testable; actual manual display and console FTP acceptance remain open.
 
 Retry reuses verified encrypted stages when every input is unchanged; it never resumes a partially written stream.
 
@@ -20,11 +22,11 @@ The application intentionally requires a matching user support-file set. No prod
 2. Test Xenosaga II switching in both directions and save/load across discs. Until then, multi-disc console behavior remains experimental.
 3. Run on the actual Intel Monterey MacBook Air and M4 mini. Record OS/build, time, memory and standalone behavior. Cross-compilation is not runtime acceptance.
 4. Test external-volume behavior, including large-file limitations and interrupted/disconnected destinations.
-5. Resolve release license arrangement, preserve third-party notices/corresponding source, Developer ID sign and notarize.
+5. Developer ID sign and notarize. GPL-3.0-only is approved and applied; notices and exact corresponding-source archives are included.
 
 ## Deferred enhancements
 
-Older/parent-dependent/multi-track CHD; audio/mixed-track CUE and pregaps; curated online CONFIG database/updates (local library search is available); manual creation; richer save management; console transfer; resume of a partially written encryption stream. Retries reuse verified encrypted stages when inputs are unchanged, as described in the UI.
+Older/parent-dependent/multi-track CHD; audio/mixed-track CUE and pregaps; curated automatic CONFIG updates (user-supplied HTTPS catalogs and local search are available); individual-save editing beyond whole-card backups; resume of a partially written encryption stream. Retries reuse verified encrypted stages when inputs are unchanged, as described in the UI.
 
 ## Data and output rules
 

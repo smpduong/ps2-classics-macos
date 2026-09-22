@@ -1,3 +1,22 @@
+# Version 1.0 — release candidate 8 (RC8, build 17)
+
+- Whole-card verified backup/restore creates new copies and preserves existing saves. It checks conversion integrity, not individual saved-game health.
+- Native PDF/image manuals become indexed 960×768 BC1 pages, included in package and recovery fingerprints. Original manual files are unchanged. Actual PS3 display remains untested.
+- Optional HTTPS CONFIG catalog loading with explicit provenance review and size/SHA-256-verified downloads. No default public catalog, background updates or silent project changes.
+- Optional FTP console transfer into a fresh remote folder. The local package is verified, upload is read back in full, and only matching bytes receive the final `.pkg` name. Credentials are not persisted. Loopback acceptance is automated; no real console has been contacted.
+- Bounded process output and streaming read-back protect memory use. All new utilities share the existing cancellable operation slot.
+
+# Version 1.0 — release candidate 7 (RC7, build 16)
+
+- Applied the owner's approved GPL-3.0-only public license; preserved vendor grants and added full nested audio sources/notices to the app.
+- Established a local Git baseline. No public repository or push was created.
+- Strict release checks now require all test prerequisites and reject skipped required tests; generated filesystem/CHD fixtures exercise the full suite.
+- The exact extracted source archive rebuilds in a fresh directory and passes native functional checks with no access to the original build products.
+
+The remaining release gates are real PS3/client/physical-drive acceptance and Developer ID signing/notarization. The public-license decision is closed. Broader disc formats, individual-save editing, a curated public CONFIG feed and mid-stream encryption resume remain unfinished enhancements.
+
+## Historical release notes
+
 # Version 1.0 — release candidate 6 (RC6, build 15)
 
 - Audio import now accepts mono/stereo WAV, AIFF, MP3, AAC/ALAC M4A and FLAC.

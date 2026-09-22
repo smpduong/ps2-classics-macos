@@ -301,6 +301,7 @@ final class SessionStoreTests: XCTestCase {
         project.icon = URL(fileURLWithPath: "/art/icon.png")
         project.background = URL(fileURLWithPath: "/art/background.jpg")
         project.sound = URL(fileURLWithPath: "/art/sound.at3")
+        project.manual = URL(fileURLWithPath: "/art/manual.pdf")
         project.output = URL(fileURLWithPath: "/out/Game.pkg")
         return project
     }

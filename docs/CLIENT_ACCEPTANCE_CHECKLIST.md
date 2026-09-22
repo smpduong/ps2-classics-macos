@@ -45,7 +45,17 @@ This app is locally built and locally verified. It has **not** been tested on a 
 
 - Multi-disc console behavior is experimental until your title is tested.
 - A retry reuses already-verified encrypted stages when inputs are unchanged; it does not resume a partially written stream.
-- Non-WAV audio conversion, multi-track CUE/CHD, manuals and console transfer are not implemented.
+- Common audio conversion, manuals, whole-card backups and FTP transfer are implemented and locally checked. Verify audio/manual playback and the actual console FTP server separately.
+- Multi-track CUE/CHD, older/parent CHDs, individual-save editing, a curated public CONFIG feed and mid-stream encryption resume remain outside this candidate.
 - The app is ad-hoc signed for local use; Developer ID signing and notarization are not done.
 
 Current RC5 destination requirement: build/export on APFS or Mac OS Extended, then copy completed files to exFAT if needed. Direct publication on filesystems lacking exclusive rename or hard links is refused before work starts; no placeholder is published. Physical USB disconnection testing remains separate.
+
+## RC8 optional workflows
+
+- Build with a short user-provided PDF manual; check page orientation, legibility, navigation and return-to-game behavior on PS3.
+- Back up a copy of a known card, restore into another new file, and test the restored copy on console without replacing the original backup.
+- Start the PS3 FTP server; record its product/version, actual port and folder. Transfer a synthetic or authorized package, locate the reported new subfolder, compare the result and install explicitly. Interrupt a separate transfer and inspect the identified partial folder. Passwords must not be recorded in the acceptance report.
+- Test an authorized publisher catalog, download a CONFIG, restart offline and choose the saved copy in a project. Confirm catalog refresh does not change an existing selection.
+
+These tests are pending and must be recorded against the exact RC8 manifest hash.

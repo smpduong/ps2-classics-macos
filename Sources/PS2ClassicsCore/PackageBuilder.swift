@@ -106,9 +106,14 @@ public final class PackageBuilder: @unchecked Sendable {
         let rapHash = FileDigest.sha256(data: try Data(contentsOf: rap))
         let cardHash = try FileDigest.sha256(card)
         let logoHash = FileDigest.sha256(data: logoBytes)
-        let assets = ["icon": FileDigest.sha256(data: iconPNG),
+        var assets = ["icon": FileDigest.sha256(data: iconPNG),
                       "background": FileDigest.sha256(data: backgroundPNG),
                       "sound": soundHash]
+        if let manual = project.manual {
+            let hashes = try SoftwareManual.build(source: manual, directory: root.appendingPathComponent("USRDIR/CONTENT"),
+                cancelled: { try self.runner.checkCancellation() }, progress: progress)
+            assets.merge(hashes) { _, new in new }
+        }
         let support = ["key": keyHash, "rap": rapHash, "logo": logoHash, "card": cardHash]
         var sources = [URL](); var total: UInt64 = 0; var expansion: UInt64 = 0
         var payloads = [UInt64]()
@@ -303,6 +308,10 @@ public final class PackageBuilder: @unchecked Sendable {
                           "sound":project.sound?.standardizedFileURL.path ?? ""],
             "reusedStages":reusedStages,"stageCacheUsed":cacheEnabled,
             "checks":["Image segment integrity and prepared-payload round trip","Original SHA-256 unchanged","Memory-card round trip","Package decrypted-payload read-back"]]
+        if let manual = project.manual {
+            var paths = report["assetPaths"] as! [String:String]
+            paths["manual"] = manual.standardizedFileURL.path; report["assetPaths"] = paths
+        }
         if !cacheNote.isEmpty { report["cacheNote"] = cacheNote }
         let reportURL = URL(fileURLWithPath:output.path+".report.json")
         do {

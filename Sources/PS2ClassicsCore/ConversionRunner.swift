@@ -165,29 +165,46 @@ public final class ConversionRunner: @unchecked Sendable {
     /// of leaving it running. A mid-run cancellation is surfaced as a
     /// cancellation, never as a malformed-result decode error.
     public func capture(arguments: [String], helper: URL,
-                        environment: [String: String] = [:]) throws -> Data {
-        guard FileManager.default.isExecutableFile(atPath: helper.path) else {
-            throw ConversionFailure(message: "The bundled conversion helper is missing.")
+                        environment: [String: String] = [:], input: Data? = nil,
+                        maximumOutput: Int = 8 * 1024 * 1024,
+                        consume: ((Data) throws -> Void)? = nil) throws -> Data {
+        guard FileManager.default.isExecutableFile(atPath: helper.path), maximumOutput >= 0,
+              (input?.count ?? 0) <= 4096 else {
+            throw ConversionFailure(message: "Invalid helper or bounded process request.")
         }
-        let task = Process()
-        task.executableURL = helper
-        task.arguments = arguments
-        if !environment.isEmpty {
-            task.environment = ProcessInfo.processInfo.environment.merging(environment) { _, new in new }
-        }
-        let pipe = Pipe()
-        task.standardOutput = pipe
-        task.standardError = pipe
-        task.standardInput = FileHandle.nullDevice
+        let task = Process(); task.executableURL = helper; task.arguments = arguments
+        if !environment.isEmpty { task.environment = ProcessInfo.processInfo.environment.merging(environment) { _, new in new } }
+        let pipe = Pipe(), stdin = Pipe()
+        task.standardOutput = pipe; task.standardError = pipe
+        task.standardInput = input == nil ? FileHandle.nullDevice : stdin.fileHandleForReading
+        // A short input fits in the pipe before the child starts; no secrets on
+        // disk, in arguments or in the environment, and no broken-pipe race.
+        if let input { try stdin.fileHandleForWriting.write(contentsOf: input) }
+        try stdin.fileHandleForWriting.close()
         lock.lock()
         if cancelled { lock.unlock(); throw ConversionFailure(message: "Cancelled before the operation started.") }
         do { try task.run(); process = task; lock.unlock() }
         catch { lock.unlock(); throw error }
         defer { lock.lock(); process = nil; lock.unlock() }
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        task.waitUntilExit()
-        lock.lock(); let wasCancelled = cancelled; lock.unlock()
-        if wasCancelled { throw ConversionFailure(message: "Cancelled. No output was written.") }
+        var data = Data(), total = 0, failure: Error?
+        while true {
+            let ended = autoreleasepool { () -> Bool in
+                let chunk = pipe.fileHandleForReading.availableData
+                if chunk.isEmpty { return true }
+                if failure != nil { return false } // Drain while terminated child exits.
+                do {
+                    guard chunk.count <= maximumOutput - total else {
+                        throw ConversionFailure(message: "The helper response exceeded its size limit.")
+                    }
+                    total += chunk.count
+                    if let consume { try consume(chunk) } else { data.append(chunk) }
+                } catch { failure = error; if task.isRunning { task.terminate() } }
+                return false
+            }
+            if ended { break }
+        }
+        task.waitUntilExit(); try checkCancellation()
+        if let failure { throw failure }
         guard task.terminationStatus == 0 else {
             let detail = String(decoding: data.prefix(4096), as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
             throw ConversionFailure(message: detail.isEmpty ? "The helper stopped before it produced a result." : detail)

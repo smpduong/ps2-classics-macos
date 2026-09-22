@@ -56,7 +56,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 struct StudioView: View {
     @ObservedObject private var model = StudioModel.shared
-    private let pages = [("Build a package","shippingbox"),("Build queue","list.bullet.rectangle"),("Image tools","opticaldisc"),("Memory cards","externaldrive"),("Setup","slider.horizontal.3")]
+    private let pages = [("Build a package","shippingbox"),("Build queue","list.bullet.rectangle"),("Image tools","opticaldisc"),("Memory cards","externaldrive"),("Online CONFIGs","network"),("Send to PS3","arrow.up.doc"),("Setup","slider.horizontal.3")]
     var body: some View {
         HStack(spacing:0) {
             VStack(alignment:.leading,spacing:22) {
@@ -64,15 +64,17 @@ struct StudioView: View {
                 Text("PS2 Classics").font(.title2.bold())
                 Text("FOR MAC").font(.caption).tracking(3).foregroundColor(.secondary)
                 Divider()
+                VStack(spacing:6) {
                 ForEach(pages,id:\.0) { page in
                     Button { model.page = page.0 } label: {
                         HStack { Label(page.0,systemImage:page.1); Spacer() }.padding(10)
                             .background(model.page == page.0 ? Color.accentColor.opacity(0.15) : Color.clear).cornerRadius(8)
                     }.buttonStyle(.plain).disabled((model.utilityBusy && model.page != page.0) || (model.busy && ["Image tools","Memory cards"].contains(page.0)))
                 }
+                }
                 Spacer()
                 if model.busy { ProgressView(value:model.fraction); Text(model.stage).font(.caption).lineLimit(3) }
-                Text("1.0 RC7 • Release candidate\nIntel + Apple Silicon\nmacOS 12 and later").font(.caption).foregroundColor(.secondary)
+                Text("1.0 RC8 • Release candidate\nIntel + Apple Silicon\nmacOS 12 and later").font(.caption).foregroundColor(.secondary)
             }.padding(22).frame(width:195).frame(maxHeight:.infinity).background(Color(NSColor.controlBackgroundColor))
             Divider()
             Group {
@@ -80,6 +82,8 @@ struct StudioView: View {
                 case "Build queue": QueueView(model:model)
                 case "Image tools": ImageWorkspaceView()
                 case "Memory cards": CardView()
+                case "Online CONFIGs": OnlineConfigView()
+                case "Send to PS3": ConsoleTransferView()
                 case "Setup": SetupView(model:model)
                 default: PackageView(model:model)
                 }
@@ -179,6 +183,9 @@ struct PackageView: View {
                                 Text("Otherwise, artwork is fitted without distortion. A title card is generated when no image is selected.").font(.caption).foregroundColor(.secondary)
                                 Button(model.findingArtwork ? "Finding artwork…" : "Find artwork…") { model.findArtwork(0) }
                                     .disabled(model.project.discs.isEmpty || model.findingArtwork)
+                                Button("Choose manual PDF or image…") { if let manual = model.chooseFile("Choose a PDF (up to 100 pages) or a single PNG/JPEG page, up to 32 MB.") { model.project.manual=manual; model.persist() } }
+                                if let manual=model.project.manual { HStack { Text(manual.lastPathComponent).font(.caption); Button("Clear manual") { model.project.manual=nil; model.persist() } } }
+                                Text("Manual pages are fitted to the console format. PS3 display acceptance remains pending.").font(.caption).foregroundColor(.secondary)
                                 Button("Choose AT3 sound…") { if let sound = model.chooseFile("Choose an existing SND0.AT3 audio file (at most 2.5 MB).") { model.project.sound=sound } }
                                 if let sound=model.project.sound { HStack { Text(sound.lastPathComponent).font(.caption); Button("Clear") { model.project.sound=nil } } }
                                 Button(model.convertingAudio ? "Converting audio…" : "Convert audio to AT3…") { model.convertAudioToAT3() }.disabled(model.busy)
@@ -470,13 +477,52 @@ struct CardView: View {
             Picker("Operation",selection:$encrypt) { Text("VMC → VME").tag(true); Text("VME → VMC").tag(false) }.pickerStyle(.segmented).disabled(busy)
             Button("Choose memory card…") { source=StudioModel.shared.chooseFile("Choose an 8, 16, 32 or 64 MiB PS2 card with ECC."); output=nil; message="" }.disabled(busy)
             Text(source?.path ?? "No card selected").font(.callout).textSelection(.enabled)
+            HStack {
+                Button("Create verified backup…") { backupCard() }.disabled(busy || source == nil)
+                Button("Restore backup to new file…") { restoreCard() }.disabled(busy)
+            }
             if busy { ProgressView(value:progress); Button("Cancel") { runner?.cancel() } }
             else { Button("Convert and verify…",action:convert).disabled(source==nil) }
             if !message.isEmpty { Text(message).textSelection(.enabled) }
-            if let output=output { Button("Show converted card") { NSWorkspace.shared.activateFileViewerSelecting([output]) } }
+            if let output=output { Button("Show result") { NSWorkspace.shared.activateFileViewerSelecting([output]) } }
             Text("CEX cards only. This checks conversion integrity, not the internal health of every save or per-console protected card formats.").font(.caption).foregroundColor(.secondary)
             Spacer()
         }.padding(30)
+    }
+    private func backupCard() {
+        guard let source else { return }
+        let panel=NSSavePanel();panel.nameFieldStringValue=source.deletingPathExtension().lastPathComponent+".ps2cardbackup"
+        panel.message="Create a new verified backup. Existing backups are never replaced."
+        guard panel.runModal() == .OK, let target=panel.url else { return }
+        cardBackupOperation(source:source,target:target,restore:false)
+    }
+    private func restoreCard() {
+        let picker=NSOpenPanel();picker.canChooseDirectories=true;picker.canChooseFiles=false
+        picker.message="Choose a .ps2cardbackup folder. Restoration creates a new file."
+        guard picker.runModal() == .OK, let backup=picker.url else{return}
+        do {
+            let record=try MemoryCardBackup.record(in:backup)
+            let panel=NSSavePanel();panel.nameFieldStringValue="Restored."+URL(fileURLWithPath:record.file).pathExtension
+            guard panel.runModal() == .OK,let target=panel.url else{return}
+            cardBackupOperation(source:backup,target:target,restore:true)
+        } catch {message=error.localizedDescription}
+    }
+    private func cardBackupOperation(source:URL,target:URL,restore:Bool) {
+        let session=ConversionRunner()
+        guard let owned=StudioModel.shared.beginUtility(.convert,cancel:{session.cancel()}) else {message="Another operation is already running.";return}
+        runner=session;busy=true;output=nil;message="";progress=0
+        let helper=StudioModel.shared.helperURL
+        Task {
+            do {
+                try await Task.detached {
+                    let update: @Sendable (ConversionProgress)->Void = { value in Task { @MainActor in guard busy, runner === session else{return};progress=value.fraction } }
+                    if restore { try MemoryCardBackup.restore(backup:source,destination:target,helper:helper,runner:session,progress:update) }
+                    else { try MemoryCardBackup.create(source:source,destination:target,helper:helper,runner:session,progress:update) }
+                }.value
+                output=target;message=restore ? "Restored copy verified. Existing cards were preserved." : "Backup verified byte-for-byte. Individual saved-game health is not checked."
+            } catch {message=error.localizedDescription}
+            busy=false;runner=nil;StudioModel.shared.endUtility(owned)
+        }
     }
     private func convert() {
         guard let source=source else { return }
@@ -490,7 +536,7 @@ struct CardView: View {
         Task {
             do {
                 try await Task.detached {
-                    try session.run(arguments:[command,source.path,target.path],helper:helper) { update in Task { @MainActor in progress=update.fraction } }
+                    try session.run(arguments:[command,source.path,target.path],helper:helper) { update in Task { @MainActor in guard busy, runner === session else{return};progress=update.fraction } }
                 }.value
                 output=target; message="Converted card created; round-trip verification passed."
             } catch { message=error.localizedDescription }

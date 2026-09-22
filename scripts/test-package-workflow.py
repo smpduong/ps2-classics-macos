@@ -41,13 +41,41 @@ def package_entries(path):
         entries[name]=(offset,size,flags)
     return f,entries,read
 
-def check_package(path,discs,titleid,sound=None):
+def check_package(path,discs,titleid,sound=None,manual=None,ffmpeg=None):
     f,entries,read=package_entries(path)
     with f:
         def content(name):
             off,size,_=entries[name];return read(off,size)
         for name in ['PARAM.SFO','ICON0.PNG','PIC1.PNG','PS3LOGO.DAT','USRDIR/ISO.BIN.EDAT','USRDIR/SAVEDATA/SCEVMC0.VME','USRDIR/SAVEDATA/SCEVMC1.VME']: assert name in entries,name
         if sound is not None: assert content('SND0.AT3') == sound.read_bytes(), 'packaged sound differs from selected AT3'
+        if manual is not None:
+            index=content('USRDIR/CONTENT/manual.idx')
+            names=index.decode('ascii').splitlines()
+            assert names == ['001.dxt','002.dxt'],names
+            report=json.loads(Path(str(path)+'.report.json').read_text())
+            assert report['assetHashes']['manual/index']==hashlib.sha256(index).hexdigest()
+            for i,name in enumerate(names):
+                page=content('USRDIR/CONTENT/'+name)
+                assert len(page)==368648 and struct.unpack('<II',page[:8])==(960,768)
+                assert report['assetHashes']['manual/'+name]==hashlib.sha256(page).hexdigest()
+                # Independent FFmpeg BC1 decoder via the standard DDS container.
+                header=bytearray(128);header[:4]=b'DDS '
+                struct.pack_into('<7I',header,4,124,0x81007,768,960,len(page)-8,0,0)
+                struct.pack_into('<II4s',header,76,32,4,b'DXT1')
+                struct.pack_into('<I',header,108,0x1000)
+                with tempfile.TemporaryDirectory(prefix='ps2-manual-decode-') as temp:
+                    dds=Path(temp)/'page.dds';dds.write_bytes(header+page[8:])
+                    decoded=subprocess.run([str(ffmpeg),'-v','error','-i',str(dds),'-f','rawvideo','-pix_fmt','rgb24','-'],capture_output=True)
+                    assert decoded.returncode==0,decoded.stderr
+                    rgb=decoded.stdout;assert len(rgb)==960*768*3
+                    def pixel(x,y):return rgb[(y*960+x)*3:(y*960+x)*3+3]
+                    if i==0:
+                        top,bottom=pixel(100,100),pixel(100,650)
+                        assert top[0]>240 and top[1]<80 and top[2]<40,top
+                        assert bottom[2]>240 and bottom[1]<80 and bottom[0]<40,bottom
+                    else:
+                        center=pixel(480,384);assert center[1]>240 and center[0]<80 and center[2]<80,center
+            assert Path(report['assetPaths']['manual']).resolve()==manual.resolve()
         sfo=content('PARAM.SFO');assert sfo[:4]==b'\0PSF' and titleid.encode() in sfo
         for name,size in [('ICON0.PNG',(320,176)),('PIC1.PNG',(1920,1080))]:
             png=content(name);assert png[:8]==b'\x89PNG\r\n\x1a\n';assert struct.unpack('>II',png[16:24])==size
@@ -68,7 +96,10 @@ def main():
     parser.add_argument('--chdman',type=Path,help='Create CHDs with this independent tool and build from those instead.')
     parser.add_argument('--report',type=Path,help='Write the JSON result summary to this path.')
     parser.add_argument('--sound',type=Path,help='Include this test AT3 and independently compare its packaged bytes.')
+    parser.add_argument('--manual',type=Path,help='Generated two-page PDF fixture for manual integration.')
+    parser.add_argument('--ffmpeg',type=Path,help='Independent manual page decoder.')
     args=parser.parse_args();results=[]
+    if args.manual and not args.ffmpeg: parser.error('--manual requires --ffmpeg')
     with tempfile.TemporaryDirectory(prefix='ps2-package-tests-') as tmp:
         d=Path(tmp);(d/'klic.bin').write_bytes(bytes(range(16)));(d/'license.rap').write_bytes(bytes(range(16)))
         (d/'PS3LOGO.DAT').write_bytes(b'SYNTHETIC TEST ASSET - NOT A CONSOLE LOGO')
@@ -100,10 +131,11 @@ def main():
             output=d/f'case-{number}.pkg'
             project=dict(version=1,title='Workflow test '+name,titleID=discs[0][1],discs=[dict(id=str(uuid.uuid4()),source=p.as_uri(),gameID=gid,configSource='Synthetic fixture') for p,gid in discs],support=dict(key=(d/'klic.bin').as_uri(),rap=(d/'license.rap').as_uri(),logo=(d/'PS3LOGO.DAT').as_uri(),card=(d/'SCEVMC0.VMC').as_uri(),contentID=CID),cropArtwork=False,output=output.as_uri())
             if args.sound: project['sound']=args.sound.resolve().as_uri()
+            if args.manual: project['manual']=args.manual.resolve().as_uri()
             manifest=d/'test.ps2project';manifest.write_text(json.dumps(project))
             start=time.monotonic();run=subprocess.run([str(args.builder),str(manifest),str(args.helper)],capture_output=True,text=True)
             assert run.returncode==0,(name,run.stderr,run.stdout[-1000:])
-            entries=check_package(output,[p for p,_ in original_discs],discs[0][1],args.sound)
+            entries=check_package(output,[p for p,_ in original_discs],discs[0][1],args.sound,args.manual,args.ffmpeg)
             report=json.loads(Path(str(output)+'.report.json').read_text());assert all(d['originalUnchanged'] for d in report['discs'])
             # Read-only package verification must accept the real package and reject tampering.
             # Mutations use bounded sparse copies, never whole multi-gigabyte reads.

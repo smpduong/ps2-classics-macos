@@ -32,3 +32,20 @@ __pycache__/
 *.p8
 *.mobileprovision
 ._*
+
+# User assets and optional-workflow outputs (also uppercase extensions)
+*.[iI][sS][oO]
+*.[bB][iI][nN]
+*.[cC][uU][eE]
+*.[cC][hH][dD]
+*.[pP][kK][gG]
+*.[eE][nN][cC]
+*.[vV][mM][cC]
+*.[vV][mM][eE]
+*.[rR][aA][pP]
+*.[rR][iI][fF]
+*.[kK][eE][yY]
+*.ps2cardbackup/
+*.ps2project
+*.report.json
+CONFIG-*/

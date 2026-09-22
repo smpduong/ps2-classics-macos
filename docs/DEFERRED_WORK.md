@@ -27,10 +27,9 @@ redistribution of its CONFIG data, with a stable revision or checksum mechanism
 established for a selected CONFIG source in this project. This is an open
 research/approval question, not proof that no usable source exists. A pinned
 repository commit with recorded content digests can supply version identity;
-a dedicated checksum endpoint is not intrinsically required. No curated
-updater or newly approved CONFIG data is included in RC6.
+a dedicated checksum endpoint is not intrinsically required. RC8 adds a generic user-supplied HTTPS catalog importer; it does not select an upstream or bundle newly approved CONFIG data.
 
-**Acceptance design (when unblocked):**
+**Curated-feed acceptance design (generic importing is implemented in RC8):**
 - User-initiated, opt-in download only; never automatic and never a background
   fetch.
 - A reviewable candidate list with provenance (source, revision, checksum,
@@ -65,18 +64,20 @@ reference. Decoder openability is explicitly not sufficient.
 **Until then:** keep exact rejection diagnostics and never discard or flatten
 content silently.
 
-## 4. Manuals, save management, console transfer
+## 4. Manuals, card backups and console transfer — implemented locally in RC8
 
-- **Manuals:** import a user-supplied PDF/png as a package resource is a small
-  addition, pending the exact package resource name and size limits used by the
-  console workflow.
-- **Save management:** any addition must copy-first export/backup with format
-  checks and restore verification, and must never modify a real save in place.
-- **Console transfer:** requires a defined authenticated protocol and real
-  endpoint acceptance; no upload is attempted or implied.
+- Manuals use the `USRDIR/CONTENT/manual.idx` and numbered `.dxt` page format found in pinned pop-fe2 commit `2afb9a3544e26ec1927f6389857240a0fe4bc205`: 960×768, eight-byte little-endian dimensions plus opaque BC1 blocks. The renderer/encoder is original native code. Independent FFmpeg decoding and real synthetic package extraction check the result. PS3 display/navigation remains an external acceptance case.
+- Whole-card backup/restoration copies first, checks framing, performs native round-trip validation and verifies hashes. Existing files are not overwritten. Individual-save browsing/editing is still additional work: it requires a bounded, validated PS2 card filesystem parser and non-destructive save import/export fixtures.
+- FTP was selected from the user's protocol history. A local loopback server tests upload, read-back, corruption, truncation, extra bytes, failure and cancellation. No real console address, credentials or destination was supplied, and no real console was contacted. Real server command/path compatibility and installation are separate acceptance cases.
 
 ## 5. Mid-stream resume
 
 **Prerequisite:** authenticated checkpoints, immutable source identity and
 crash-consistent partial records for the encrypted image format. Retain
 verified-stage reuse on retry; do not append to arbitrary partial ciphertext.
+
+## Concrete remaining implementation work
+
+For parent CHDs, carry an explicit parent selection through import, saved project, queue and build fingerprints; validate parent SHA-1 identity before opening; bound ancestry depth and cycles; preserve both inputs; independently compare expanded bytes against MAME. Older versions need their own bounded header/map validation and independently produced fixtures. Multi-track formats additionally need a proven console representation for track timing and audio; silently dropping audio is not acceptable.
+
+For mid-stream resume, introduce an owned partial-stage journal tied to source/key/content/profile hashes, persist only complete authenticated groups after syncing them, verify the retained prefix before resuming, and test forced termination at every journal/data publication boundary. Integrate partial-stage retention with writer locks, cache limits, cancellation and recovery. This is unfinished engineering work; completed-stage reuse must not be relabelled as stream resume.

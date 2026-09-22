@@ -51,10 +51,28 @@ project restores that project's own settings.
 
 ## Before distributing
 
-This build is a **1.0 release candidate**: the local workflow and its automated checks pass, but the external acceptance gates in [CLIENT_ACCEPTANCE_CHECKLIST.md](CLIENT_ACCEPTANCE_CHECKLIST.md) are still open. It is ad hoc signed for local testing, not Developer ID signed or notarized. Cross-compiled Intel code has not been executed on the client's Monterey MacBook Air. Before an external 1.0 release: test that machine, the M4 mini and the target PS3; complete signing/notarization and licensing review. Third-party license notices are included in the bundle.
+This build is a **1.0 release candidate**: the local workflow and its automated checks pass, but the external acceptance gates in [CLIENT_ACCEPTANCE_CHECKLIST.md](CLIENT_ACCEPTANCE_CHECKLIST.md) are still open. It is ad hoc signed for local testing, not Developer ID signed or notarized. Cross-compiled Intel code has not been executed on the client's Monterey MacBook Air. Before an external 1.0 release: test that machine, the M4 mini and the target PS3; complete signing/notarization. The approved public license is GPL-3.0-only; distribute the exact matching source archive with binary releases. Third-party license notices are included in the bundle.
 
 ## Audio and destination safeguards
 
 Audio exports remain available if you switch projects while encoding. The app only selects the result as the package sound when the original project and its sound selection remain unchanged. Cancelling before publication leaves no finished audio file. Truncated WAV payloads and inconsistent PCM frame layouts are rejected; large metadata chunks are skipped without loading the audio into memory. Decoding/resampling also uses small blocks, and cancellation during this stage removes its private workspace.
 
 Build packages and export audio on an APFS or Mac OS Extended volume, then copy completed files to exFAT if needed. RC4's exFAT placeholder/rename workaround could replace a file created by another process during publication, or leave an empty final filename after a crash. RC5 refuses destinations that cannot provide exclusive publication, before starting expensive work. Physical USB and console acceptance remain outstanding.
+
+## Verified card backups
+
+In **Memory cards**, choose a card and use **Create verified backup**. The new `.ps2cardbackup` folder contains a card copy and a manifest with its size and SHA-256. The app checks the card framing and reverses a conversion to check byte integrity. Keep the entire folder. **Restore backup to new file** verifies the manifest, copied bytes and format before publishing a new VMC/VME. Existing cards/backups are never replaced. This is whole-card backup and restore; it does not inspect, edit or repair individual saves.
+
+## Manuals
+
+Use **Choose manual** in package details to select an unlocked PDF (1–100 pages) or a single PNG/JPEG image, up to 32 MB (images at most 64 megapixels and 32,768 pixels per side). Pages are fitted onto a 960×768 white background and compressed to the console manual format. The source remains unchanged. The project and queue retain the manual selection, and generated page hashes belong to the durable build attempt. PS3 display/navigation still needs acceptance testing. Remove the selection to build without a manual.
+
+## Online CONFIG catalogs
+
+Open **Online CONFIGs**, enter a direct HTTPS catalog URL, then choose **Load / refresh**. Review the publisher, revision and declared license. Search by the exact game ID and explicitly download an entry into a chosen local library folder. The app enforces the advertised size and SHA-256 before saving the CONFIG and catalog/download receipts in a fresh folder. Use **Choose CONFIG** in the package view to select that copy. Downloaded copies remain usable offline; refreshing a catalog never changes existing project selections. Redirects are not followed. No public catalog is bundled or endorsed. The publisher schema is documented in `docs/ONLINE_CONFIG_CATALOG.md` in the corresponding source.
+
+## FTP transfer
+
+Open **Send to PS3**. Start your console’s FTP server and enter its address, port, login and destination folder. The displayed `/dev_hdd0/packages` is an editable starting value, not a detected console setting. Choose an existing completed package, then **Transfer and verify**. FTP is unencrypted, so use a trusted local network. Login details are not saved and the password is cleared after the attempt.
+
+The app verifies the local package, creates a fresh `PS2-…` directory remotely, uploads `package.part`, streams the entire file back for a size/hash comparison, confirms the local file is unchanged, then renames to `package.pkg`. This uses about two package sizes of network traffic. It never overwrites an existing console directory. Locate the reported folder with the console file manager to install the package; the console’s installer may not scan nested folders automatically. An interrupted transfer leaves its uniquely named folder for inspection and is not automatically resumed or deleted. A disconnect during final rename can leave either name; inspect the reported folder before retrying. Transfer verification does not establish installation or game compatibility.

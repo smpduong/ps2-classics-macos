@@ -72,6 +72,7 @@ def main():
             ('backend', ['python3','scripts/test-backend.py']),
             ('extra-formats', ['python3','scripts/test-extra-formats.py']),
             ('publication', ['python3','scripts/test-publication.py','--helper',ROOT/'dist/ps2-convert']),
+            ('manual-packages', ['python3','scripts/test-manual-workflow.py','--ffmpeg',ffmpeg]),
             ('recovery', ['python3','scripts/test-recovery-workflow.py']),
             ('chd-matrix', ['python3','scripts/test-chd.py','--chdman',chdman,'--helper',ROOT/'dist/ps2-convert','--builder',ROOT/'dist/ps2-build']),
             ('filesystems', ['python3','scripts/test-external-volume.py'])]:
