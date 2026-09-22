@@ -11,7 +11,7 @@ import tarfile
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
-INCLUDE = ('LICENSE', 'LICENSING.md', 'Package.swift', 'README.md', 'AGENTS.md', '.gitignore', 'Sources', 'Tests', 'ThirdParty', 'scripts', 'docs')
+INCLUDE = ('LICENSE', 'LICENSING.md', 'release.json', 'Package.swift', 'README.md', 'AGENTS.md', '.gitignore', 'Sources', 'Tests', 'ThirdParty', 'scripts', 'docs')
 EXCLUDE = {'.git', '.build', '__pycache__', '.DS_Store'}
 
 

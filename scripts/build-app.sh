@@ -66,6 +66,17 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 </dict></array>
 </dict></plist>
 PLIST
+python3 - "$APP/Contents/Info.plist" <<'CONFIG'
+import json, plistlib, sys
+from pathlib import Path
+settings = json.loads(Path('release.json').read_text())
+p = Path(sys.argv[1])
+info = plistlib.loads(p.read_bytes())
+info['CFBundleShortVersionString'] = settings['shortVersion']
+info['CFBundleVersion'] = str(settings['build'])
+info['PS2ReleaseLabel'] = settings['label']
+p.write_bytes(plistlib.dumps(info))
+CONFIG
 codesign --force --sign - "$APP/Contents/Helpers/ps2-convert"
 codesign --force --sign - "$APP"
 codesign --verify --deep --strict "$APP"

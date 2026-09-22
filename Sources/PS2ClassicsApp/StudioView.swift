@@ -72,7 +72,7 @@ struct StudioView: View {
                 }
                 Spacer()
                 if model.busy { ProgressView(value:model.fraction); Text(model.stage).font(.caption).lineLimit(3) }
-                Text("1.0 RC6 • Release candidate\nIntel + Apple Silicon\nmacOS 12 and later").font(.caption).foregroundColor(.secondary)
+                Text("1.0 RC7 • Release candidate\nIntel + Apple Silicon\nmacOS 12 and later").font(.caption).foregroundColor(.secondary)
             }.padding(22).frame(width:195).frame(maxHeight:.infinity).background(Color(NSColor.controlBackgroundColor))
             Divider()
             Group {

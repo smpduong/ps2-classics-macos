@@ -58,3 +58,14 @@ The four local ISOs are excluded from Git and remain unmodified. Real-image test
 Licensed under **GPL-3.0-only** for original project code; third-party components retain their own terms. See [LICENSE](LICENSE), [licensing policy](LICENSING.md) and [the dependency inventory](docs/CORRESPONDING_SOURCE.md). Binary releases include the matching source archive.
 
 Current destination requirement: build/export on APFS or Mac OS Extended, then copy completed files to exFAT if needed. Direct publication on filesystems lacking exclusive rename or hard links is refused before work starts; no placeholder is published. Physical USB disconnection testing remains separate.
+
+## Strict release verification
+
+`bash scripts/validate-release.sh` requires CMake, Python 3, FFmpeg and MAME
+chdman (test tools only). Set `FFMPEG_TEST_TOOL`/`CHDMAN_TEST_TOOL` if they are
+not on PATH. Missing tools, skipped Swift tests or a failed gate stop release
+validation. The command generates its own CHD and mounted-filesystem fixtures,
+runs all tests, rebuilds the extracted source archive in a fresh directory and
+records the exact artifact hashes in a release-check receipt. `--with-roms` adds
+the optional four local ISO builds. Plain `swift test` remains a fast developer
+check and is not a release acceptance claim. Release metadata is in release.json.
