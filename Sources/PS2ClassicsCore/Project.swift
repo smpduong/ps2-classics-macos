@@ -9,7 +9,22 @@ public struct GameDisc: Codable, Identifiable, Equatable, Sendable {
     public var config: URL?
     public var configHash: String?
     public var configSource = "User-selected local file"
-    public init(source: URL, gameID: String = "") { self.source = source; self.gameID = gameID }
+    /// Explicitly chosen parent CHD for a parent-dependent image. Only the
+    /// path is stored at selection time (parents are gigabytes); the exact
+    /// bytes are hashed at build time and bound into the attempt fingerprint.
+    /// New optional fields decode as nil in older projects and queues.
+    public var chdParent: URL?
+    /// Parent SHA-1 declared by the child header, shown so the choice can be
+    /// reviewed. The helper enforces the identity cryptographically at use.
+    public var chdParentSHA1: String?
+    public init(source: URL, gameID: String = "", chdParent: URL? = nil, chdParentSHA1: String? = nil) {
+        self.source = source; self.gameID = gameID
+        self.chdParent = chdParent; self.chdParentSHA1 = chdParentSHA1
+    }
+    /// True when this disc cannot build until a parent CHD is chosen.
+    public var needsParent: Bool {
+        source.pathExtension.lowercased() == "chd" && chdParent == nil && chdParentSHA1 != nil
+    }
 }
 
 public struct SupportFiles: Codable, Equatable, Sendable {
@@ -103,6 +118,11 @@ public struct GameProject: Codable, Equatable, Sendable {
             throw ConversionFailure(message: "A folder or file name in the destination is longer than \(DestinationCheck.maxComponentBytes) bytes and will not work on common filesystems. Shorten it.")
         }
         guard !FileManager.default.fileExists(atPath: output.path) else { throw ConversionFailure(message: "The package destination already exists. Choose a new filename.") }
+        for (i, disc) in discs.enumerated() where disc.chdParent != nil {
+            guard disc.source.pathExtension.lowercased() == "chd" else {
+                throw ConversionFailure(message: "Disc \(i + 1) names a parent CHD but is not a CHD image. Clear the parent selection.")
+            }
+        }
     }
     public static func validGameID(_ text: String) -> Bool {
         text.range(of: #"^[A-Z]{4}[0-9]{5}$"#, options: .regularExpression) != nil

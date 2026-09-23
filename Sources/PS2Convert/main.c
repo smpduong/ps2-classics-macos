@@ -417,8 +417,8 @@ int main(int argc,char **argv) {
     if(argc==3 && !strcmp(argv[1],"inspect-encrypted")) { inspect_encrypted(argv[2]);return 0; }
     if(argc==3 && !strcmp(argv[1],"verify-package")) { package_verify(argv[2],NULL,NULL);return 0; }
     if((argc==4 || argc==5) && !strcmp(argv[1],"verify-package")) { package_verify(argv[2],argv[3],argc==5?argv[4]:NULL);return 0; }
-    if(argc==3 && !strcmp(argv[1],"inspect-chd")) { chd_inspect(argv[2]);return 0; }
-    if(argc==4 && !strcmp(argv[1],"extract-chd")) { chd_extract(argv[2],argv[3]);return 0; }
+    if((argc==3 || argc==4) && !strcmp(argv[1],"inspect-chd")) { chd_inspect(argv[2],argc==4?argv[3]:NULL);return 0; }
+    if((argc==4 || argc==5) && !strcmp(argv[1],"extract-chd")) { chd_extract(argv[2],argv[3],argc==5?argv[4]:NULL);return 0; }
     if(argc==5 && !strcmp(argv[1],"package")) { package_build(argv[2],argv[3],argv[4]);return 0; }
     if(argc==4 && (!strcmp(argv[1],"vmc-encrypt")||!strcmp(argv[1],"vmc-decrypt"))) { memory_card(argv[2],argv[3],!strcmp(argv[1],"vmc-encrypt"));return 0; }
     if(argc==7 && !strcmp(argv[1],"edat")) { build_edat(argv[2],argv[3],argv[4],argv[5],argv[6]);return 0; }

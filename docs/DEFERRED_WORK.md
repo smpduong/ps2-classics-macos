@@ -79,6 +79,22 @@ proxies. Older (v1–v4) CHDs still have no independently produced fixtures —
 only the version-field rejection — and multi-track support still lacks a
 proven console representation for track timing/audio.
 
+**RC10 implementation (single-level parents only):** delta CHDs are now
+supported when the user explicitly chooses the exact parent file. The helper
+opens the pair through libchdr, enforces the parent identity match, resolves
+parent-backed hunks during inspection, expansion and game-ID detection, and
+re-checks both files for mid-run changes; the raw-SHA-1 check covers the
+resolved bytes. Only single-level parents are accepted (a parent-dependent
+parent is refused); the child and parent must be different files; a parent
+selection on a standalone image is refused. The parent path and the SHA-256
+of its exact bytes travel through saved projects, queue snapshots, build
+fingerprints, the verified stage cache and recovery records, so swapping the
+parent invalidates dependent stages and confirmations exactly like swapping
+the source. Proven by `CHDParentTests`, reference parity (helper output ==
+chdman output == input) and a parent-CHD package in `test-chd.py`. Deeper
+chains still need flattening; older versions and multi-track/audio still have
+no responsible implementation path (see prerequisite above).
+
 ## 4. Manuals, card backups and console transfer — implemented locally in RC8
 
 - Manuals use the `USRDIR/CONTENT/manual.idx` and numbered `.dxt` page format found in pinned pop-fe2 commit `2afb9a3544e26ec1927f6389857240a0fe4bc205`: 960×768, eight-byte little-endian dimensions plus opaque BC1 blocks. The renderer/encoder is original native code. Independent FFmpeg decoding and real synthetic package extraction check the result. PS3 display/navigation remains an external acceptance case. RC9 locks in the probed `/Rotate` behavior (rotated pages render upright) as a regression test.
@@ -110,7 +126,11 @@ remains deferred with this exact design.
 
 ## Concrete remaining implementation work
 
-For parent CHDs, carry an explicit parent selection through import, saved project, queue and build fingerprints; validate parent SHA-1 identity before opening; bound ancestry depth and cycles; preserve both inputs; independently compare expanded bytes against MAME. Older versions need their own bounded header/map validation and independently produced fixtures. Multi-track formats additionally need a proven console representation for track timing and audio; silently dropping audio is not acceptable.
+For deeper-than-single-level parent chains, carry the full ancestry with the
+same explicit selection, identity validation, depth/cycle bounds and
+fingerprinting the single-level path already has; until then they are refused
+precisely. Older versions need their own bounded header/map validation and
+independently produced fixtures. Multi-track formats additionally need a proven console representation for track timing and audio; silently dropping audio is not acceptable.
 
 For mid-stream resume, introduce an owned partial-stage journal tied to source/key/content/profile hashes, persist only complete authenticated groups after syncing them, verify the retained prefix before resuming, and test forced termination at every journal/data publication boundary. Integrate partial-stage retention with writer locks, cache limits, cancellation and recovery. This is unfinished engineering work; completed-stage reuse must not be relabelled as stream resume.
 

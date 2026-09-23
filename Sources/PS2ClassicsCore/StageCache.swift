@@ -15,11 +15,17 @@ public struct DiscStageKey: Codable, Equatable, Sendable {
     public var sourceSHA256: String
     public var gameID: String
     public var configSHA256: String?
+    /// SHA-256 of the exact parent CHD bytes used, for parent-dependent
+    /// images. Nil for standalone images; a change selects a new cache.
+    public var parentSHA256: String?
+    public var parentPath: String?
     public init(index: Int, sourcePath: String,
-                sourceSHA256: String, gameID: String, configSHA256: String?) {
+                sourceSHA256: String, gameID: String, configSHA256: String?,
+                parentSHA256: String? = nil, parentPath: String? = nil) {
         self.index = index; self.sourcePath = sourcePath
         self.sourceSHA256 = sourceSHA256
         self.gameID = gameID; self.configSHA256 = configSHA256
+        self.parentSHA256 = parentSHA256; self.parentPath = parentPath
     }
 }
 
@@ -35,11 +41,14 @@ public struct StageBinding: Codable, Equatable, Sendable {
     public var rapSHA256: String
     public var contentID: String
     public var helperSHA256: String
+    public var parentSHA256: String?
     public init(disc: Int, profile: String, sourceSHA256: String, configSHA256: String?,
-                keySHA256: String, rapSHA256: String, contentID: String, helperSHA256: String) {
+                keySHA256: String, rapSHA256: String, contentID: String, helperSHA256: String,
+                parentSHA256: String? = nil) {
         self.disc = disc; self.profile = profile; self.sourceSHA256 = sourceSHA256
         self.configSHA256 = configSHA256; self.keySHA256 = keySHA256; self.rapSHA256 = rapSHA256
         self.contentID = contentID; self.helperSHA256 = helperSHA256
+        self.parentSHA256 = parentSHA256
     }
 }
 

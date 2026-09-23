@@ -13,6 +13,9 @@ final class WorkspaceModel: ObservableObject {
     @Published var source: URL?
     @Published var key: URL?
     @Published var inspection: DiscInspection?
+    /// Explicitly chosen parent CHD when the source stores differences
+    /// against one. Reset whenever the source changes.
+    @Published var parent: URL?
     @Published var action = ConversionAction.encrypt
     @Published var contentID = ""
     @Published var discNumber = 1 {
@@ -64,6 +67,7 @@ final class WorkspaceModel: ObservableObject {
         }
         token = owned; runner = session
         source = (try? DiscInput.resolve(url)) ?? url
+        parent = nil
         inspection = nil; error = nil; output = nil; detection = nil; notice = nil
         operation = .inspecting; stage = "Inspecting"; fraction = 0
         Task {
@@ -73,6 +77,76 @@ final class WorkspaceModel: ObservableObject {
                 }.value
                 guard token == owned else { return }
                 inspection = inspected
+                if inspected.requiresParent {
+                    notice = nil
+                    error = "This CHD stores differences against a parent image. Choose the exact parent CHD below; both originals stay unchanged."
+                }
+            } catch { if token == owned { self.error = error.localizedDescription } }
+            finish(owned)
+        }
+    }
+
+    /// Clears the parent and re-inspects the source standalone so the shown
+    /// state always matches the pair that would be converted.
+    func clearParent() {
+        guard operation == .idle, let source = source else { return }
+        let session = ConversionRunner()
+        guard let owned = studio.beginUtility(.inspect, cancel: { session.cancel() }) else {
+            notice = "Another operation is already running."; return
+        }
+        token = owned; runner = session
+        parent = nil
+        inspection = nil; error = nil; output = nil; detection = nil; notice = nil
+        operation = .inspecting; stage = "Inspecting"; fraction = 0
+        Task {
+            do {
+                let inspected = try await Task.detached(priority: .userInitiated) {
+                    try DiscInspector.inspect(source, helper: self.helper, runner: session)
+                }.value
+                guard token == owned else { return }
+                inspection = inspected
+                if inspected.requiresParent {
+                    error = "This CHD stores differences against a parent image. Choose the exact parent CHD below; both originals stay unchanged."
+                }
+            } catch { if token == owned { self.error = error.localizedDescription } }
+            finish(owned)
+        }
+    }
+
+    /// Chooses the explicit parent CHD and re-inspects the pair, so a wrong
+    /// file fails here with its precise reason instead of during conversion.
+    func chooseParent() {
+        guard operation == .idle, let source = source else { return }
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = false; panel.allowsMultipleSelection = false
+        panel.message = "Choose the exact parent CHD this image was derived from."
+        panel.prompt = "Use parent"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        guard url.pathExtension.lowercased() == "chd" else {
+            error = "The parent must be a CHD file (\(url.lastPathComponent))."; return
+        }
+        guard url.standardizedFileURL != source.standardizedFileURL else {
+            error = "The parent and the image are the same file."; return
+        }
+        let session = ConversionRunner()
+        guard let owned = studio.beginUtility(.inspect, cancel: { session.cancel() }) else {
+            notice = "Another operation is already running."; return
+        }
+        token = owned; runner = session
+        operation = .inspecting; stage = "Checking parent"; fraction = 0
+        error = nil; output = nil; detection = nil; notice = nil
+        Task {
+            do {
+                let inspected = try await Task.detached(priority: .userInitiated) {
+                    try DiscInspector.inspect(source, parent: url, helper: self.helper, runner: session)
+                }.value
+                guard token == owned else { return }
+                if inspected.isSupported {
+                    parent = url; inspection = inspected
+                    notice = "Parent accepted. Both originals stay unchanged."
+                } else {
+                    error = "The selected file is not this image's parent. Choose the exact parent CHD."
+                }
             } catch { if token == owned { self.error = error.localizedDescription } }
             finish(owned)
         }
@@ -107,7 +181,7 @@ final class WorkspaceModel: ObservableObject {
         }
         let request = ConversionRequest(action: action, source: source, destination: destination,
                                         keyFile: key, contentID: contentID, discNumber: discNumber,
-                                        logicalName: logicalName)
+                                        logicalName: logicalName, parentSource: parent)
         let session = ConversionRunner()
         guard let owned = studio.beginUtility(.convert, cancel: { session.cancel() }) else {
             notice = "Another operation is already running."; return
@@ -225,12 +299,23 @@ struct ImageWorkspaceView: View {
                             ForEach(result.notes, id: \.self) { Text($0).font(.caption).foregroundColor(.secondary) }
                         }
                     }
+                    if model.inspection?.requiresParent == true {
+                        HStack {
+                            Button("Choose parent CHD…", action: model.chooseParent).disabled(model.busy)
+                            if let parent = model.parent {
+                                Text(parent.lastPathComponent).font(.caption).foregroundColor(.secondary)
+                                Button("Clear") { model.clearParent() }.disabled(model.busy)
+                            } else if let sha1 = model.inspection?.parentSHA1 {
+                                Text("Needs parent \(String(sha1.prefix(16)))…").font(.system(size:10,design:.monospaced)).foregroundColor(.secondary).textSelection(.enabled)
+                            }
+                        }
+                    }
                     Divider()
                     Picker("Operation", selection: $model.action) {
                         ForEach(ConversionAction.allCases, id: \.self) { Text($0.rawValue).tag($0) }
                     }.pickerStyle(.segmented).disabled(model.busy)
-                    Text(model.action == .encrypt
-                         ? "Supports ISO, single-track BIN and supported DVD/CD CHD images. CHD expansion uses temporary space beside the output. Preparation adds padding and LIMG to the output stream. Each encrypted image is read back and checked before it is published."
+                     Text(model.action == .encrypt
+                          ? "Supports ISO, single-track BIN and supported DVD/CD CHD images, including parent-dependent CHDs once their exact parent is chosen. CHD expansion uses temporary space beside the output. Preparation adds padding and LIMG to the output stream. Each encrypted image is read back and checked before it is published."
                          : "Supports CEX images sealed with any numbered ISO.BIN.ENC profile. Use Detect profile for a packaged later disc, then decrypt with its disc number. The decrypted payload retains any preparation padding and LIMG; it is not automatically stripped back to the original ISO.")
                         .font(.callout).foregroundColor(.secondary)
                     HStack {

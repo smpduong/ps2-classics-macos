@@ -52,12 +52,56 @@ with tempfile.TemporaryDirectory(prefix='ps2-chd-check-') as tmp:
  before_parent=hashlib.sha256(genuine_parent.read_bytes()).hexdigest()
  synth.write_dvd_child(genuine_child,genuine_parent,combined)
  assert genuine_child.read_bytes()[104:124]==combined!=bytes(20)
- for command in (['inspect-chd',genuine_child],['extract-chd',genuine_child,d/'genuine-child.image']):
-  failed=run([a.helper]+command,False)
-  assert 'Parent-dependent CHDs must be flattened' in failed.stderr,(command,failed.stderr[-500:])
+ probe=json.loads(run([a.helper,'inspect-chd',genuine_child]).stdout)
+ assert probe.get('requiresParent') is True and probe.get('parentSHA1')==combined.hex(),probe
+ failed=run([a.helper,'extract-chd',genuine_child,d/'genuine-child.image'],False)
+ assert 'Parent-dependent CHDs must be flattened' in failed.stderr,failed.stderr[-500:]
  assert not (d/'genuine-child.image').exists()
  assert hashlib.sha256(genuine_parent.read_bytes()).hexdigest()==before_parent
  print('Passed genuine parent/child rejection',file=sys.stderr,flush=True)
+ # Reference parent/child chains from chdman itself: the helper must expand
+ # the child byte-exact (matching both the input and chdman's own
+ # extraction), and must refuse wrong, nested and self parents precisely.
+ p_iso=d/'chain-p.iso';c_iso=d/'chain-c.iso'
+ p_iso.write_bytes(bytes(wf.synthetic_iso()))
+ c_data=bytearray(p_iso.read_bytes());c_data[40000]^=1;c_iso.write_bytes(bytes(c_data))
+ p_chd=d/'chain-p.chd';c_chd=d/'chain-c.chd'
+ run([a.chdman,'createdvd','-i',p_iso,'-o',p_chd,'-c','zstd','-np','2'])
+ run([a.chdman,'createdvd','-i',c_iso,'-o',c_chd,'-op',p_chd,'-c','zstd','-np','2'])
+ # A deeper chain from the synthetic pair: the grandchild declares the
+ # (parent-dependent) child as its parent, which must be refused as nested.
+ g_chd=d/'chain-g.chd'
+ synth.write_dvd_child(g_chd,genuine_child,genuine_child.read_bytes()[84:104])
+ probe=json.loads(run([a.helper,'inspect-chd',c_chd]).stdout)
+ assert probe.get('requiresParent') is True and probe.get('parentSHA1')==c_chd.read_bytes()[104:124].hex(),probe
+ probe=json.loads(run([a.helper,'inspect-chd',c_chd,p_chd]).stdout)
+ assert probe['gameID']=='SLUS12345' and probe['expandedByteCount']==len(c_iso.read_bytes()),probe
+ helper_out=d/'chain-c.image';run([a.helper,'extract-chd',c_chd,helper_out,p_chd])
+ assert helper_out.read_bytes()==c_iso.read_bytes()
+ ref_out=d/'chain-c.ref.iso';run([a.chdman,'extractdvd','-i',c_chd,'-ip',p_chd,'-o',ref_out])
+ assert ref_out.read_bytes()==c_iso.read_bytes()==helper_out.read_bytes()
+ wrong=run([a.helper,'extract-chd',c_chd,d/'chain-wrong.image',d/'zlib.chd'],False)
+ assert 'not this image' in wrong.stderr and 'identity mismatch' in wrong.stderr,wrong.stderr[-500:]
+ assert not (d/'chain-wrong.image').exists()
+ nested=run([a.helper,'extract-chd',g_chd,d/'chain-nested.image',c_chd],False)
+ assert 'single-level' in nested.stderr,nested.stderr[-500:]
+ assert not (d/'chain-nested.image').exists()
+ selfed=run([a.helper,'inspect-chd',c_chd,c_chd],False)
+ assert 'same file' in selfed.stderr,selfed.stderr[-500:]
+ unneeded=run([a.helper,'inspect-chd',p_chd,p_chd],False)
+ assert 'declares no parent' in unneeded.stderr,unneeded.stderr[-500:]
+ print('Passed reference parent/child parity and refusals',file=sys.stderr,flush=True)
+ # A parent-CHD disc must build into an independently decoded package.
+ for name in ['pkey','prap']: (d/name).write_bytes(bytes(range(16)))
+ (d/'plogo').write_bytes(b'NOT A CONSOLE LOGO');pcard=bytearray(8650752);pcard[:28]=b'Sony PS2 Memory Card Format ';(d/'pcard').write_bytes(pcard)
+ out=d/'package-parent-chd.pkg'
+ project=dict(version=1,title='Parent CHD fixture',titleID='SLUS12345',discs=[dict(id=str(uuid.uuid4()),source=c_chd.as_uri(),gameID='SLUS12345',configSource='Synthetic',chdParent=p_chd.as_uri())],support=dict(key=(d/'pkey').as_uri(),rap=(d/'prap').as_uri(),logo=(d/'plogo').as_uri(),card=(d/'pcard').as_uri(),contentID=wf.CID),cropArtwork=False,output=out.as_uri())
+ manifest=d/'project-parent.ps2project';manifest.write_text(json.dumps(project));run([a.builder,manifest,a.helper]);wf.check_package(out,[c_iso],'SLUS12345');print('Passed parent-CHD package',file=sys.stderr,flush=True)
+ # Non-CHD and versioned headers fail with precise reports, not generic errors.
+ garbage=d/'garbage.chd';garbage.write_bytes(bytes(200)+b'not a chd'+bytes(200))
+ failed=run([a.helper,'inspect-chd',garbage],False);assert 'Not a CHD image' in failed.stderr,failed.stderr[-300:]
+ v4=bytearray((d/'zlib.chd').read_bytes());v4[12:16]=struct.pack('>I',4);v4path=d/'v4.chd';v4path.write_bytes(bytes(v4))
+ failed=run([a.helper,'inspect-chd',v4path],False);assert 'version 4' in failed.stderr,failed.stderr[-300:]
  # Fail a real write and interrupt extraction; neither may publish partial output.
  def limit_output():resource.setrlimit(resource.RLIMIT_FSIZE,(1024,1024))
  fault=d/'write-fault.iso'
@@ -81,4 +125,4 @@ with tempfile.TemporaryDirectory(prefix='ps2-chd-check-') as tmp:
   project=dict(version=1,title='CHD workflow fixture',titleID='SLUS12345',discs=[dict(id=str(uuid.uuid4()),source=chd.as_uri(),gameID='SLUS12345',configSource='Synthetic')],support=dict(key=(d/'key').as_uri(),rap=(d/'rap').as_uri(),logo=(d/'logo').as_uri(),card=(d/'card').as_uri(),contentID=wf.CID),cropArtwork=False,output=out.as_uri())
   manifest=d/'project.ps2project';manifest.write_text(json.dumps(project));run([a.builder,manifest,a.helper]);wf.check_package(out,[source],'SLUS12345');print('Passed CHD package:',chd.name,file=sys.stderr,flush=True)
  assert not list(d.glob('.ps2-build-*')) and not list(d.glob('*.partial.*'))
- print(json.dumps(dict(passed=True,helper=wf.binary_info(a.helper),builder=wf.binary_info(a.builder),chdman=str(a.chdman),exactExtractions=len(fixtures),packages=2,negativeCases=8)))
+ print(json.dumps(dict(passed=True,helper=wf.binary_info(a.helper),builder=wf.binary_info(a.builder),chdman=str(a.chdman),exactExtractions=len(fixtures),packages=3,negativeCases=14)))

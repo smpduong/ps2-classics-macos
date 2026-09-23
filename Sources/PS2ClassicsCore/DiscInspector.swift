@@ -14,6 +14,12 @@ public struct DiscInspection: Codable, Sendable {
     public let notes: [String]
     public var gameID: String? = nil
     public var expandedByteCount: UInt64? = nil
+    /// Set when a CHD stores differences against a parent that was not
+    /// supplied. `expandedByteCount` stays nil, so the image still counts as
+    /// unsupported until the exact parent is chosen.
+    public var requiresParent: Bool = false
+    /// Lowercase parent SHA-1 declared by the child header, for display.
+    public var parentSHA1: String? = nil
     public var isSupported: Bool { declaredVolumeBytes != nil || expandedByteCount != nil }
 }
 
@@ -34,9 +40,9 @@ public enum InspectionError: LocalizedError {
 /// Bounded, read-only format inspection. This does not certify a PS2 disc,
 /// its physical CD/DVD medium, its file tree, or its payload integrity.
 public enum DiscInspector {
-    public static func inspect(_ input: URL, helper: URL? = nil, runner: ConversionRunner? = nil) throws -> DiscInspection {
+    public static func inspect(_ input: URL, parent: URL? = nil, helper: URL? = nil, runner: ConversionRunner? = nil) throws -> DiscInspection {
         let url = try DiscInput.resolve(input)
-        if url.pathExtension.lowercased() == "chd" { return try CHDImporter.inspect(url, helper: helper, runner: runner) }
+        if url.pathExtension.lowercased() == "chd" { return try CHDImporter.inspect(url, parent: parent, helper: helper, runner: runner) }
         let info = try url.resourceValues(forKeys: [.isRegularFileKey])
         guard info.isRegularFile == true else { throw InspectionError.notRegularFile }
         let handle = try FileHandle(forReadingFrom: url)

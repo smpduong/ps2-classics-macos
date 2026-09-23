@@ -190,8 +190,8 @@ final class StudioModel: ObservableObject {
             do {
                 let discs = try await Task.detached(priority:.userInitiated) { try inputs.map { url -> GameDisc in
                     let result = try DiscInspector.inspect(url, helper: helper, runner: runner)
-                    guard result.isSupported else { throw ConversionFailure(message:"Unsupported image: \(url.lastPathComponent). Choose ISO, BIN, CHD or a single data-track CUE.") }
-                    return GameDisc(source:url,gameID:result.gameID ?? "")
+                    guard result.isSupported || result.requiresParent else { throw ConversionFailure(message:"Unsupported image: \(url.lastPathComponent). Choose ISO, BIN, CHD or a single data-track CUE.") }
+                    return GameDisc(source:url,gameID:result.gameID ?? "",chdParentSHA1:result.parentSHA1)
                 }}.value
                 // Results are applied only for the still-current generation; a
                 // replaced project never receives stale discs. The slot is
@@ -393,6 +393,50 @@ final class StudioModel: ObservableObject {
         guard project.discs.indices.contains(index) else { return }
         invalidateSearch(targeting: project.discs[index].id)
     }
+    /// Chooses the explicit parent CHD for a parent-dependent disc. The
+    /// candidate is verified immediately — the helper opens the pair and
+    /// checks the cryptographic parent identity — so a wrong file fails here
+    /// with its precise reason instead of during a long build.
+    func chooseParent(_ index: Int) {
+        guard project.discs.indices.contains(index) else { return }
+        guard let parent = chooseFile("Choose the exact parent CHD this image was derived from.") else { return }
+        guard parent.pathExtension.lowercased() == "chd" else {
+            message = "The parent must be a CHD file (\(parent.lastPathComponent))."; return
+        }
+        let child = project.discs[index].source
+        guard parent.standardizedFileURL != child.standardizedFileURL else {
+            message = "The parent and the image are the same file. Choose the file this image was derived from."; return
+        }
+        let session = ConversionRunner()
+        guard let token = beginUtility(.inspect, cancel: { session.cancel() }) else {
+            message = "Another operation is already running. Finish or cancel it before choosing a parent."; return
+        }
+        let helper = helperURL, discID = project.discs[index].id
+        Task {
+            do {
+                let inspection = try await Task.detached(priority: .userInitiated) {
+                    try DiscInspector.inspect(child, parent: parent, helper: helper, runner: session)
+                }.value
+                guard ownsUtility(token) else { return }
+                guard let slot = project.discs.firstIndex(where: { $0.id == discID }) else { return }
+                guard inspection.isSupported else {
+                    message = "The selected file is not this image's parent. Choose the exact parent CHD."; return
+                }
+                project.discs[slot].chdParent = parent
+                if project.discs[slot].gameID.isEmpty { project.discs[slot].gameID = inspection.gameID ?? "" }
+                message = "Parent accepted. Both originals stay unchanged."
+                persist()
+            } catch {
+                if ownsUtility(token) { message = error.localizedDescription }
+            }
+            endUtility(token)
+        }
+    }
+    func clearParent(_ index: Int) {
+        guard project.discs.indices.contains(index) else { return }
+        project.discs[index].chdParent = nil
+        persist()
+    }
     private func invalidateSearch(targeting discID: UUID) {
         if configSearchTarget == discID || configDisc == discID {
             configSearchGeneration=UUID(); configSearchTarget=nil
@@ -487,7 +531,8 @@ final class StudioModel: ObservableObject {
                 "missingSupport":project.support.missing,
                 "discs":project.discs.map { ["filename":$0.source.lastPathComponent,"gameID":$0.gameID,
                     "config":$0.config?.lastPathComponent ?? "","configSHA256":$0.configHash ?? "",
-                    "configSource":$0.configSource] }]
+                    "configSource":$0.configSource,
+                    "parent":$0.chdParent?.lastPathComponent ?? ""] }]
             result["destinationFilename"]=project.output?.lastPathComponent ?? ""
             return result
         }
@@ -764,7 +809,7 @@ final class StudioModel: ObservableObject {
                 switch verdict {
                 case .confirmedOutput(let entries, let payload):
                     jobs[i].status = "Locally verified (recovered)"
-                    jobs[i].detail = "Confirmed output of this job: the completion record matches this job's durable build attempt (ordered source/CONFIG/support/artwork hashes and fit setting), and the package digest, content ID, title ID and disc images all match (\(entries) entries, \(ByteCountFormatter.string(fromByteCount: Int64(payload), countStyle: .file)) payload)."
+                    jobs[i].detail = "Confirmed output of this job: the completion record matches this job's durable build attempt (ordered source/parent/CONFIG/support/artwork hashes and fit setting), and the package digest, content ID, title ID and disc images all match (\(entries) entries, \(ByteCountFormatter.string(fromByteCount: Int64(payload), countStyle: .file)) payload)."
                 case .containerOnly(let reason):
                     jobs[i].status = "Interrupted"
                     jobs[i].detail = "The package is structurally intact, but it is not confirmed as this job's output: \(reason). It was left untouched."

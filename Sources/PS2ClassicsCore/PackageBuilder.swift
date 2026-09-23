@@ -123,8 +123,26 @@ public final class PackageBuilder: @unchecked Sendable {
         for (i,disc) in project.discs.enumerated() {
             try check()
             let source = try DiscInput.resolve(disc.source)
-            let inspection = try source.pathExtension.lowercased()=="chd" ? CHDImporter.inspect(source,helper:helper,runner:runner) : DiscInspector.inspect(source)
-            guard inspection.isSupported else { throw ConversionFailure(message:"Unsupported disc image: \(disc.source.lastPathComponent)") }
+            // A parent selection only makes sense on a CHD source, and the
+            // parent itself must be a directly referenced CHD file.
+            let parent: URL?
+            if let selected = disc.chdParent {
+                guard disc.source.pathExtension.lowercased() == "chd" else {
+                    throw ConversionFailure(message:"Disc \(i+1) names a parent CHD but is not a CHD image. Clear the parent selection.")
+                }
+                guard selected.pathExtension.lowercased() == "chd",
+                      FileManager.default.fileExists(atPath: selected.path) else {
+                    throw ConversionFailure(message:"Disc \(i+1) parent CHD is missing or is not a CHD file (\(selected.lastPathComponent)). Choose the exact parent CHD before building.")
+                }
+                parent = selected
+            } else { parent = nil }
+            let inspection = try DiscInspector.inspect(source, parent: parent, helper: helper, runner: runner)
+            guard inspection.isSupported else {
+                if inspection.requiresParent {
+                    throw ConversionFailure(message:"Disc \(i+1) (\(source.lastPathComponent)) stores differences against a parent CHD. Choose the exact parent file beside the disc before building.")
+                }
+                throw ConversionFailure(message:"Unsupported disc image: \(disc.source.lastPathComponent)")
+            }
             if let detected = inspection.gameID, detected != disc.gameID {
                 throw ConversionFailure(message:"\(disc.source.lastPathComponent) identifies as \(detected), not \(disc.gameID). Correct its disc ID before building.")
             }
@@ -146,9 +164,13 @@ public final class PackageBuilder: @unchecked Sendable {
                 configHash = hash
             }
             configBytes.append(rawConfig)
+            // The parent's exact bytes join the stage identity, so swapping
+            // the parent file invalidates every dependent stage and attempt.
+            let parentSHA256 = try parent.map { try FileDigest.sha256($0, cancelled: check) }
             stageKeys.append(DiscStageKey(index: i, sourcePath: source.path,
                                           sourceSHA256: try FileDigest.sha256(source, cancelled: check),
-                                          gameID: disc.gameID, configSHA256: configHash))
+                                          gameID: disc.gameID, configSHA256: configHash,
+                                          parentSHA256: parentSHA256, parentPath: parent?.path))
             sources.append(source); total += inspection.expandedByteCount ?? inspection.byteCount
             expansion += inspection.expandedByteCount ?? 0
             payloads.append(inspection.expandedByteCount ?? inspection.byteCount)
@@ -186,7 +208,9 @@ public final class PackageBuilder: @unchecked Sendable {
                 QueuedDiscIdentity(index: key.index, gameID: disc.gameID,
                                    source: disc.source.path,
                                    sourceSHA256: key.sourceSHA256,
-                                   configHash: key.configSHA256)
+                                   configHash: key.configSHA256,
+                                   parentSource: key.parentPath,
+                                   parentSHA256: key.parentSHA256)
             },
             supportHashes: support, assetHashes: assets)
         try onAttemptPrepared?(attempt)
@@ -205,7 +229,8 @@ public final class PackageBuilder: @unchecked Sendable {
         func binding(for i: Int, profile: String) -> StageBinding {
             StageBinding(disc: i, profile: profile, sourceSHA256: stageKeys[i].sourceSHA256,
                          configSHA256: stageKeys[i].configSHA256, keySHA256: keyHash, rapSHA256: rapHash,
-                         contentID: project.support.contentID, helperSHA256: helperHash)
+                         contentID: project.support.contentID, helperSHA256: helperHash,
+                         parentSHA256: stageKeys[i].parentSHA256)
         }
         var reusedStages = 0
         let jobEnvironment = ["PS2_WORKSPACE": workspace.path, "PS2_JOB_ID": jobID.uuidString]
@@ -225,6 +250,10 @@ public final class PackageBuilder: @unchecked Sendable {
             let before = stageKeys[i].sourceSHA256
             let name = "ISO.BIN.ENC"+(i==0 ? "" : String(i+1))
             var report: [String:Any] = ["source":disc.source.path,"gameID":disc.gameID,"disc":i+1,"index":i,"sha256":before,"sourceSHA256":before]
+            if let parent = disc.chdParent {
+                report["parentSource"] = parent.path
+                report["parentSHA256"] = stageKeys[i].parentSHA256 ?? ""
+            }
             // The exact CONFIG bytes selected earlier; never re-read the original.
             let config = configBytes[i]
             if let bytes = config {
@@ -258,7 +287,9 @@ public final class PackageBuilder: @unchecked Sendable {
                 var image = sources[i]
                 if image.pathExtension.lowercased()=="chd" {
                     let expanded=workspace.appendingPathComponent("disc-\(i).image")
-                    try run(["extract-chd",image.path,expanded.path],label:"Disc \(i+1)")
+                    var extract=["extract-chd",image.path,expanded.path]
+                    if let parent = disc.chdParent { extract.append(parent.path) }
+                    try run(extract,label:"Disc \(i+1)")
                     image=expanded
                 }
                 try run(["encrypt-iso",image.path,imageTarget.path,key.path,project.support.contentID,String(i+1),name],label:"Disc \(i+1) of \(sources.count)")
@@ -266,9 +297,14 @@ public final class PackageBuilder: @unchecked Sendable {
             }
             // The same documented stability invariant governs fresh and reused
             // stages: re-hash the source and only claim unchanged when checked.
+            // A parent CHD is re-hashed too: swapping it mid-build must fail
+            // rather than silently expand against different bytes.
             testMutationHook?("checking-original-\(i)")
             progress(ConversionProgress(stage:"Checking original disc \(i+1)",fraction:0))
             guard try FileDigest.sha256(sources[i],cancelled:check)==before else { throw ConversionFailure(message:"An input changed during this build. Package was not published.") }
+            if let parent = disc.chdParent, let expected = stageKeys[i].parentSHA256 {
+                guard try FileDigest.sha256(parent,cancelled:check)==expected else { throw ConversionFailure(message:"The parent CHD changed during this build. Package was not published.") }
+            }
             if reused {
                 imageSHA = try FileDigest.sha256(imageTarget, cancelled: check)
                 if let cache = cache, let claim = cacheClaim { try? cache.checkpoint(claim) }

@@ -119,10 +119,17 @@ public struct QueuedDiscIdentity: Codable, Equatable, Sendable {
     /// re-reading a mutable path.
     public var sourceSHA256: String?
     public var configHash: String?
+    /// Explicitly chosen parent CHD path and, on the build-attempt side, the
+    /// SHA-256 of its exact bytes. New optional fields decode as nil in older
+    /// records, which then match only parentless builds.
+    public var parentSource: String?
+    public var parentSHA256: String?
     public init(index: Int? = nil, gameID: String, source: String,
-                sourceSHA256: String? = nil, configHash: String?) {
+                sourceSHA256: String? = nil, configHash: String?,
+                parentSource: String? = nil, parentSHA256: String? = nil) {
         self.index = index; self.gameID = gameID; self.source = source
         self.sourceSHA256 = sourceSHA256; self.configHash = configHash
+        self.parentSource = parentSource; self.parentSHA256 = parentSHA256
     }
 }
 
@@ -146,7 +153,8 @@ public struct QueuedJobIdentity: Codable, Equatable, Sendable {
         self.discs = project.discs.map {
             QueuedDiscIdentity(gameID: $0.gameID,
                                source: $0.source.standardizedFileURL.path,
-                               configHash: $0.configHash)
+                               configHash: $0.configHash,
+                               parentSource: $0.chdParent?.standardizedFileURL.path)
         }
         func path(_ url: URL?) -> String { url?.standardizedFileURL.path ?? "" }
         self.supportPaths = ["key": path(project.support.key), "rap": path(project.support.rap),
@@ -200,8 +208,10 @@ public struct QueuedJobIdentity: Codable, Equatable, Sendable {
             guard recorded.gameID == expected.gameID,
                   Self.standardizing(recorded.source) == Self.standardizing(expected.source),
                   recorded.configHash == expected.configHash,
-                  expected.sourceSHA256 == nil || recorded.sourceSHA256 == expected.sourceSHA256 else {
-                return "the completion record's disc \(i + 1) (game ID, source, source bytes or CONFIG) does not match this queued job"
+                  Self.standardizing(recorded.parentSource ?? "") == Self.standardizing(expected.parentSource ?? ""),
+                  expected.sourceSHA256 == nil || recorded.sourceSHA256 == expected.sourceSHA256,
+                  expected.parentSHA256 == nil || recorded.parentSHA256 == expected.parentSHA256 else {
+                return "the completion record's disc \(i + 1) (game ID, source, parent, source bytes or CONFIG) does not match this queued job"
             }
         }
         guard record.supportPaths == supportPaths else {
@@ -263,8 +273,10 @@ public struct BuildAttemptIdentity: Codable, Equatable, Sendable {
                   recorded.gameID == expected.gameID,
                   QueuedJobIdentity.standardizing(recorded.source) == QueuedJobIdentity.standardizing(expected.source),
                   recorded.sourceSHA256 == expected.sourceSHA256,
-                  recorded.configHash == expected.configHash else {
-                return "the completion record's disc \(i + 1) (order, game ID, source bytes or CONFIG) does not match this attempt"
+                  recorded.configHash == expected.configHash,
+                  QueuedJobIdentity.standardizing(recorded.parentSource ?? "") == QueuedJobIdentity.standardizing(expected.parentSource ?? ""),
+                  recorded.parentSHA256 == expected.parentSHA256 else {
+                return "the completion record's disc \(i + 1) (order, game ID, parent, source bytes or CONFIG) does not match this attempt"
             }
         }
         guard record.supportHashes == supportHashes else {
@@ -352,7 +364,9 @@ public struct BuildCompletionRecord: Sendable, Equatable {
                                gameID: $0["gameID"] as? String ?? "",
                                source: $0["source"] as? String ?? "",
                                sourceSHA256: ($0["sourceSHA256"] as? String) ?? ($0["sha256"] as? String),
-                               configHash: $0["configSHA256"] as? String)
+                               configHash: $0["configSHA256"] as? String,
+                               parentSource: $0["parentSource"] as? String,
+                               parentSHA256: $0["parentSHA256"] as? String)
         }
         self.supportPaths = json["supportPaths"] as? [String: String] ?? [:]
         self.assetPaths = json["assetPaths"] as? [String: String] ?? [:]

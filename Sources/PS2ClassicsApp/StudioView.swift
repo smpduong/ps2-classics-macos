@@ -146,6 +146,21 @@ struct PackageView: View {
                                     TextField("CONFIG source / version",text:$model.project.discs[i].configSource).font(.caption)
                                     Text("SHA-256: \(model.project.discs[i].configHash ?? "")").font(.system(size:10,design:.monospaced)).foregroundColor(.secondary).textSelection(.enabled)
                                 }
+                                if model.project.discs[i].chdParentSHA1 != nil || model.project.discs[i].chdParent != nil {
+                                    HStack {
+                                        if let parent=model.project.discs[i].chdParent {
+                                            Text("Parent: \(parent.lastPathComponent)").font(.caption).foregroundColor(.secondary).lineLimit(1)
+                                            Button("Change…") { model.chooseParent(i) }.disabled(model.working)
+                                            Button("Clear") { model.clearParent(i) }.disabled(model.working)
+                                        } else {
+                                            Text("This CHD stores differences against a parent image.").font(.caption).foregroundColor(.orange)
+                                            if let sha1=model.project.discs[i].chdParentSHA1 {
+                                                Text("Needs parent \(String(sha1.prefix(16)))…").font(.system(size:10,design:.monospaced)).foregroundColor(.secondary).textSelection(.enabled)
+                                            }
+                                            Button("Choose parent…") { model.chooseParent(i) }.disabled(model.working)
+                                        }
+                                    }
+                                }
                             }.padding(10).background(Color(NSColor.textBackgroundColor)).cornerRadius(8)
                         }
                         if model.project.discs.count>1 { Text("Multiple discs: order and game IDs are saved explicitly. Packages use DISC.IDX and per-disc CONFIG records. Disc switching is experimental until tested on your PS3.").font(.caption).foregroundColor(.orange) }

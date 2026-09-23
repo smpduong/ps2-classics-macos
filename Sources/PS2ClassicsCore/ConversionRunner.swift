@@ -14,12 +14,17 @@ public struct ConversionRequest: Sendable {
     public let contentID: String
     public let discNumber: Int
     public let logicalName: String
+    /// Explicitly chosen parent CHD when the source stores differences
+    /// against one. Bound into expansion exactly like the source itself.
+    public let parentSource: URL?
 
     public init(action: ConversionAction, source: URL, destination: URL, keyFile: URL,
-                contentID: String, discNumber: Int = 1, logicalName: String? = nil) {
+                contentID: String, discNumber: Int = 1, logicalName: String? = nil,
+                parentSource: URL? = nil) {
         self.action = action; self.source = source; self.destination = destination
         self.keyFile = keyFile; self.contentID = contentID; self.discNumber = discNumber
         self.logicalName = logicalName ?? EncryptedProfile.forDisc(discNumber)
+        self.parentSource = parentSource
     }
 
     /// Helper argument vector, validated before any process starts.
@@ -122,7 +127,10 @@ public final class ConversionRunner: @unchecked Sendable {
             if let workspace = workspace { try? FileManager.default.removeItem(at:workspace) }
         }
         if request.action == .encrypt && source.pathExtension.lowercased() == "chd" {
-            let info = try CHDImporter.inspect(source,helper:helper,runner:self)
+            let info = try CHDImporter.inspect(source,parent:request.parentSource,helper:helper,runner:self)
+            guard info.isSupported else {
+                throw ConversionFailure(message:"This CHD needs its parent image. Choose the exact parent CHD before encrypting.")
+            }
             let folder = request.destination.deletingLastPathComponent()
             let attrs = try FileManager.default.attributesOfFileSystem(forPath:folder.path)
             let free = (attrs[.systemFreeSize] as? NSNumber)?.uint64Value ?? 0
@@ -136,7 +144,9 @@ public final class ConversionRunner: @unchecked Sendable {
                                    output: request.destination, source: request.source,
                                    profile: request.logicalName, disc: request.discNumber)
             source = temp.appendingPathComponent("expanded.image")
-            try run(arguments:["extract-chd",request.source.path,source.path],helper:helper,
+            var extract = ["extract-chd",request.source.path,source.path]
+            if let parent = request.parentSource { extract.append(parent.path) }
+            try run(arguments:extract,helper:helper,
                     environment: environment(for: claim), progress:progress)
         }
         let arguments = try request.arguments(source: source)

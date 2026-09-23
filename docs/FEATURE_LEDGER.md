@@ -1,4 +1,4 @@
-# Feature ledger — PS2 Classics for Mac 1.0 RC9
+# Feature ledger — PS2 Classics for Mac 1.0 RC10
 
 This ledger is deliberately honest about what is **implemented and tested**,
 what is **experimental**, and what is **deferred with a concrete prerequisite**.
@@ -6,7 +6,12 @@ A deferred optional feature is not an unresolved defect in an advertised
 capability; those deferred features remain outside the advertised scope. No placeholder or disabled
 buttons are added for work that is not done.
 
-## Implemented and tested locally (RC9 additions)
+## Implemented and tested locally (RC10 additions)
+
+| Area | Change | Evidence |
+| --- | --- | --- |
+| Parent-dependent CHD import | Explicit parent selection for delta CHDs through import, image tools, saved projects, queue, fingerprints, stage cache and recovery; single-level depth bound, same-file/nesting/identity checks, parent stability re-checks, version-precise rejection | `CHDParentTests` (11 tests, in-test fixtures + helper); `test-chd.py` reference parity (helper output == chdman output == input), 6 new refusals, parent-CHD package; loopback-independent |
+| Precise CHD format reports | Non-CHD input, detected non-v5 versions and unneeded/declared-absent parents each fail with a naming message | `test-chd.py` garbage/version cases; `CHDParentTests` version/format tests |
 
 | Area | Change | Evidence |
 | --- | --- | --- |
@@ -49,7 +54,7 @@ buttons are added for work that is not done.
 ## Remaining enhancements
 
 - A curated public CONFIG feed with established file-level provenance. The generic HTTPS importer is available; there is no approved default catalog or automatic background updater.
-- Multi-track/audio CUE and CHD, older/parent-dependent CHD. These need explicit geometry, track/pregap/subchannel and parent-identity handling plus independent reference fixtures. Supported v5 single-data-track import remains unchanged.
+- Multi-track/audio CUE and CHD, older (v1–v4) CHD. These need explicit geometry, track/pregap/subchannel and version handling plus independent reference fixtures. Supported v5 single-data-track and single-level parent-dependent import remains unchanged.
 - Individual-save import (writing saves back into a card). Browse and verified
   export are now implemented; import needs FAT allocation, pinned ECC handling
   and kill-tested write boundaries.

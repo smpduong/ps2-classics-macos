@@ -53,9 +53,11 @@ def write_dvd_parent(path: Path, logical: bytes) -> bytes:
 
 
 def write_dvd_child(path: Path, parent: Path, parentsha1: bytes) -> None:
-    """Clone a parent CHD, declaring the genuine parent hash. Nothing else changes."""
+    """Clone a CHD, declaring the given parent hash. Nothing else changes.
+    Cloning a child (rather than a parent) builds deeper chains for testing
+    the single-level nesting refusal."""
     raw = bytearray(parent.read_bytes())
-    assert raw[:8] == b'MComprHD' and raw[104:124] == bytes(20)
+    assert raw[:8] == b'MComprHD'
     raw[104:124] = parentsha1
     path.write_bytes(bytes(raw))
 

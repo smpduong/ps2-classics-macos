@@ -1,3 +1,10 @@
+# Version 1.0 — release candidate 10 (RC10, build 19)
+
+- Parent-dependent (delta) CHD import. A CHD that stores differences against a parent declares the exact parent identity it needs; choosing that file verifies the pair immediately in package discs and image tools. The helper resolves parent-backed hunks through the reference decoder with identity, depth (single-level), same-file and mid-run change checks, and the raw-SHA-1 check covers the resolved bytes. Parent paths and byte hashes travel through saved projects, queue snapshots, build fingerprints, the verified stage cache and recovery records, so a swapped parent invalidates exactly like a swapped source. Proven byte-exact against the reference chdman, including a parent-CHD package.
+- Precise format reports: non-CHD input, detected non-v5 versions and misplaced parent selections each fail with a naming message instead of a generic error.
+
+Still a release candidate: PS3 install/launch/save/disc/audio/manual/FTP acceptance, client Intel Monterey and M4 runtime, physical USB behavior and Developer ID signing/notarization remain open. Deeper parent chains, older/multi-track CHD, save import, stream resume and curated CONFIG feeds stay deferred.
+
 # Version 1.0 — release candidate 9 (RC9, build 18)
 
 - Read-only save browsing with verified per-save export. The Memory cards view lists each save folder with file counts and byte totals; export copies one save into a new `.ps2save` folder with a SHA-256 manifest, re-reading every file from the card. Cards are never modified, existing exports are never replaced, and save import (writing back) is not offered. Proven on synthetic small and full-8 MiB cards plus an encrypted round trip.
