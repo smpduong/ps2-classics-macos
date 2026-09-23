@@ -1,4 +1,4 @@
-# Feature ledger — PS2 Classics for Mac 1.0 RC11
+# Feature ledger — PS2 Classics for Mac 1.0 RC12
 
 This ledger is deliberately honest about what is **implemented and tested**,
 what is **experimental**, and what is **deferred with a concrete prerequisite**.
@@ -6,7 +6,12 @@ A deferred optional feature is not an unresolved defect in an advertised
 capability; those deferred features remain outside the advertised scope. No placeholder or disabled
 buttons are added for work that is not done.
 
-## Implemented and tested locally (RC11 additions)
+## Implemented and tested locally (RC12 hardening)
+
+| Area | Change | Evidence |
+| --- | --- | --- |
+| Importer trap safety | Damaged zero-length roots fail instead of trapping; 1024-byte pages refuse import precisely; single-page-cluster and hand-built wide geometries proven | `MemoryCardImportTests` single-page round trip, wide-page refusal |
+| Bounded verification | Surgical diff streams with a free-space preflight; catalog cache evicts oldest beyond 16 | Streaming diff, `testCatalogCacheEvictsOldestBeyondLimit` |
 
 | Area | Change | Evidence |
 | --- | --- | --- |

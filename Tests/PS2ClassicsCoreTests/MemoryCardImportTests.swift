@@ -14,14 +14,16 @@ final class MemoryCardImportTests: XCTestCase {
     /// Minimal standard-layout card. `extra` adds files to the first save
     /// (e.g. filler for the no-space case).
     static func build(saves: [(String, [(String, Data)])], extra: [(String, Data)] = [],
-                      clusters: Int = 64, alloc: Int = 10) -> Data {
-        let ppc = 2, pages = clusters * ppc
+                      clusters: Int = 64, alloc: Int = 10, ppc: Int = 2) -> Data {
+        let pages = clusters * ppc
+        let cbytes = ppc * 512
         var raw = Data(count: pages * 528)
         func write(_ bytes: Data, at offset: Int) { raw.replaceSubrange(offset..<offset + bytes.count, with: bytes) }
         func page(_ p: Int, _ data: Data) { write(data, at: p * 528) }
         func cluster(_ c: Int, _ data: Data) {
-            var padded = data; padded.append(contentsOf: repeatElement(0, count: 1024 - data.count))
-            page(c * ppc, padded.prefix(512)); page(c * ppc + 1, padded.suffix(512))
+            var padded = Data(Data(data).prefix(cbytes))
+            padded.append(contentsOf: repeatElement(0, count: cbytes - padded.count))
+            for j in 0..<ppc { page(c * ppc + j, Data(padded[j * 512..<(j + 1) * 512])) }
         }
         func u32(_ v: UInt32) -> Data { Data([UInt8(v & 255), UInt8((v >> 8) & 255), UInt8((v >> 16) & 255), UInt8((v >> 24) & 255)]) }
         func dirent(mode: UInt16, length: UInt32, cluster: UInt32, name: String, dirEntry: UInt32 = 0) -> Data {
@@ -46,7 +48,7 @@ final class MemoryCardImportTests: XCTestCase {
             fat[out.last!] = Self.last
             return out
         }
-        let per = 2
+        let per = cbytes / 512
         let rootChain = take((2 + saves.count + per - 1) / per)
         var rootEntries = [dirent(mode: 0x8427, length: 0, cluster: 0, name: "."),
                            dirent(mode: 0x8427, length: 0, cluster: 0, name: "..")]
@@ -59,10 +61,10 @@ final class MemoryCardImportTests: XCTestCase {
                 if fdata.isEmpty {
                     entries.append(dirent(mode: 0x8417, length: 0, cluster: Self.last, name: fname))
                 } else {
-                    let need = (fdata.count + 1023) / 1024
+                    let need = (fdata.count + cbytes - 1) / cbytes
                     let chain = take(need)
-                    var blob = fdata; blob.append(contentsOf: repeatElement(0, count: need * 1024 - fdata.count))
-                    for (rel, i) in zip(chain, 0..<need) { cluster(alloc + rel, blob[i * 1024..<(i + 1) * 1024]) }
+                    var blob = fdata; blob.append(contentsOf: repeatElement(0, count: need * cbytes - fdata.count))
+                    for (rel, i) in zip(chain, 0..<need) { cluster(alloc + rel, Data(blob[i * cbytes..<(i + 1) * cbytes])) }
                     entries.append(dirent(mode: 0x8417, length: UInt32(fdata.count), cluster: UInt32(chain[0]), name: fname))
                 }
             }
@@ -83,14 +85,15 @@ final class MemoryCardImportTests: XCTestCase {
                 cluster(alloc + rel, blob)
             }
         }
-        let fatClusters = (fatCount + 255) / 256
-        var indirect = [UInt32](repeating: Self.last, count: 256)
+        let perFat = cbytes / 4
+        let fatClusters = (fatCount + perFat - 1) / perFat
+        var indirect = [UInt32](repeating: Self.last, count: perFat)
         for i in 0..<fatClusters { indirect[i] = UInt32(9 + i) }
         var indirectData = Data(); for w in indirect { indirectData.append(u32(w)) }
         cluster(8, indirectData)
-        var flat = fat; flat.append(contentsOf: repeatElement(0, count: fatClusters * 256 - fat.count))
+        var flat = fat; flat.append(contentsOf: repeatElement(0, count: fatClusters * perFat - fat.count))
         for i in 0..<fatClusters {
-            var blob = Data(); for w in flat[i * 256..<(i + 1) * 256] { blob.append(u32(w)) }
+            var blob = Data(); for w in flat[i * perFat..<(i + 1) * perFat] { blob.append(u32(w)) }
             cluster(9 + i, blob)
         }
         var sb = Data(count: 512)
@@ -98,7 +101,7 @@ final class MemoryCardImportTests: XCTestCase {
         sb.replaceSubrange(0x1C..<0x1C + 12, with: Data([0x31, 0x2E, 0x32, 0x2E, 0x30, 0x2E, 0x30, 0, 0, 0, 0, 0]))
         func u16(_ v: Int, at offset: Int) { sb[offset] = UInt8(v & 255); sb[offset + 1] = UInt8(v >> 8) }
         func w32(_ v: Int, at offset: Int) { let d = u32(UInt32(v)); sb.replaceSubrange(offset..<offset + 4, with: d) }
-        u16(512, at: 0x28); u16(2, at: 0x2A); u16(16, at: 0x2C); u16(0xFF00, at: 0x2E)
+        u16(512, at: 0x28); u16(ppc, at: 0x2A); u16(16, at: 0x2C); u16(0xFF00, at: 0x2E)
         w32(clusters, at: 0x30); w32(alloc, at: 0x34); w32(8135, at: 0x38); w32(0, at: 0x3C)
         w32(1023, at: 0x40); w32(1022, at: 0x44)
         var ifc = Data(); ifc.append(u32(8)); for _ in 1..<32 { ifc.append(u32(Self.last)) }
@@ -309,6 +312,105 @@ final class MemoryCardImportTests: XCTestCase {
             let saves = try MemoryCardSaves.inventory(card: destination, helper: helper,
                                                       runner: ConversionRunner())
             XCTAssertEqual(saves.map(\.name).sorted(), ["BASLUS-12345GAMEDATA", "BESLES-99999OTHER"])
+        }
+    }
+
+    func testSinglePageClusterGeometryRoundTrip() throws {
+        // One page per cluster exercises every geometry-driven path with
+        // different FAT packing and directory density.
+        let cardA = Self.build(saves: [("BASLUS-12345GAMEDATA", [("icon.sys", Self.icon), ("data.bin", Self.payload)])],
+                               clusters: 64, alloc: 10, ppc: 1)
+        let cardB = Self.build(saves: [("BESLES-99999OTHER", [("note.dat", Data("hi".utf8))])],
+                               clusters: 64, alloc: 10, ppc: 1)
+        try temporary { root in
+            let urlA = try write(cardA, name: "a.VMC", in: root)
+            let urlB = try write(cardB, name: "b.VMC", in: root)
+            let beforeB = try FileDigest.sha256(urlB)
+            let exported = try MemoryCardSaves.export(save: "BASLUS-12345GAMEDATA", card: urlA, into: root,
+                                                      helper: URL(fileURLWithPath: "/nonexistent"),
+                                                      runner: ConversionRunner())
+            let destination = root.appendingPathComponent("b-with-save.VMC")
+            let result = try MemoryCardImport.importSave(exported, card: urlB, destination: destination,
+                                                         helper: URL(fileURLWithPath: "/nonexistent"),
+                                                         runner: ConversionRunner())
+            XCTAssertEqual(result.save, "BASLUS-12345GAMEDATA")
+            XCTAssertEqual(try FileDigest.sha256(urlB), beforeB)
+            let saves = try MemoryCardSaves.inventory(card: destination,
+                                                      helper: URL(fileURLWithPath: "/nonexistent"),
+                                                      runner: ConversionRunner())
+            XCTAssertEqual(saves.map(\.name).sorted(), ["BASLUS-12345GAMEDATA", "BESLES-99999OTHER"])
+            XCTAssertEqual(saves.first(where: { $0.name == "BASLUS-12345GAMEDATA" })?
+                .files.first(where: { $0.name == "data.bin" })?.sha256,
+                FileDigest.sha256(data: Self.payload))
+        }
+    }
+
+    func testWidePageGeometryRefusesImportPrecisely() throws {
+        // 1024-byte pages parse for browsing, but import (ECC is defined per
+        // 512-byte page) refuses with a precise reason. Built by hand: a
+        // valid 16-cluster geometry with 1040-byte stride throughout.
+        func u32(_ v: UInt32) -> Data { Data([UInt8(v & 255), UInt8((v >> 8) & 255), UInt8((v >> 16) & 255), UInt8((v >> 24) & 255)]) }
+        func dirent(mode: UInt16, length: UInt32, cluster: UInt32, name: String, dirEntry: UInt32 = 0) -> Data {
+            var entry = Data(count: 512)
+            entry[0] = UInt8(mode & 255); entry[1] = UInt8(mode >> 8)
+            let l = u32(length); entry.replaceSubrange(4..<8, with: l)
+            let c = u32(cluster); entry.replaceSubrange(0x10..<0x14, with: c)
+            let d = u32(dirEntry); entry.replaceSubrange(0x14..<0x18, with: d)
+            let n = Data(name.utf8); entry.replaceSubrange(0x40..<0x40 + n.count, with: n)
+            return entry
+        }
+        var raw = Data(count: 16 * 1040)
+        func page(_ p: Int, _ data: Data) {
+            raw.replaceSubrange(p * 1040..<p * 1040 + data.count, with: data)
+        }
+        var sb = Data(count: 1024)
+        sb.replaceSubrange(0..<28, with: Data("Sony PS2 Memory Card Format ".utf8))
+        func u16(_ v: Int, at offset: Int) { sb[offset] = UInt8(v & 255); sb[offset + 1] = UInt8(v >> 8) }
+        func w32(_ v: Int, at offset: Int) { let d = u32(UInt32(v)); sb.replaceSubrange(offset..<offset + 4, with: d) }
+        u16(1024, at: 0x28); u16(1, at: 0x2A); u16(16, at: 0x2C); u16(0xFF00, at: 0x2E)
+        w32(16, at: 0x30); w32(10, at: 0x34); w32(8135, at: 0x38); w32(0, at: 0x3C)
+        w32(1023, at: 0x40); w32(1022, at: 0x44)
+        var ifc = Data(); ifc.append(u32(8)); for _ in 1..<32 { ifc.append(u32(Self.last)) }
+        sb.replaceSubrange(0x50..<0x50 + 128, with: ifc)
+        var bad = Data(); for _ in 0..<32 { bad.append(u32(Self.last)) }
+        sb.replaceSubrange(0xD0..<0xD0 + 128, with: bad)
+        sb[0x150] = 2; sb[0x151] = 0x52
+        page(0, sb)
+        var indirect = Data(); indirect.append(u32(9)); for _ in 1..<256 { indirect.append(u32(Self.last)) }
+        page(8, indirect)
+        var fat = Data()
+        for w: UInt32 in [0x80000001, 0xFFFFFFFF, 0xFFFFFFFF, 0, 0, 0] { fat.append(u32(w)) }
+        fat.append(Data(count: 1024 - fat.count))
+        page(9, fat)
+        var root = dirent(mode: 0x8427, length: 3, cluster: 0, name: ".")
+        root.append(dirent(mode: 0x8427, length: 0, cluster: 0, name: ".."))
+        page(10, root)
+        var rootB = dirent(mode: 0x8427, length: 2, cluster: 2, name: "BESLES-99999OTHER")
+        rootB.append(Data(count: 512))
+        page(11, rootB)
+        var savedir = dirent(mode: 0x8427, length: 0, cluster: 0, name: ".", dirEntry: 2)
+        savedir.append(dirent(mode: 0x8427, length: 0, cluster: 0, name: ".."))
+        page(12, savedir)
+        try temporary { root in
+            let urlB = try write(raw, name: "b.VMC", in: root)
+            let cardA = Self.build(saves: [("BASLUS-12345GAMEDATA", [("icon.sys", Self.icon)]),
+                                           ("BESLES-54321EMPTY", [])])
+            let urlA = try write(cardA, name: "a.VMC", in: root)
+            let exported = try exportGameData(from: urlA, in: root)
+            XCTAssertEqual(try MemoryCardSaves.inventory(card: urlB,
+                                                          helper: URL(fileURLWithPath: "/nonexistent"),
+                                                          runner: ConversionRunner()).map(\.name),
+                           ["BESLES-99999OTHER"])
+            do {
+                _ = try MemoryCardImport.importSave(exported, card: urlB,
+                                                    destination: root.appendingPathComponent("wide.VMC"),
+                                                    helper: URL(fileURLWithPath: "/nonexistent"),
+                                                    runner: ConversionRunner())
+                XCTFail("wide pages must refuse import")
+            } catch {
+                XCTAssertTrue(error.localizedDescription.contains("1024-byte pages"), error.localizedDescription)
+            }
+            XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("wide.VMC").path))
         }
     }
 }

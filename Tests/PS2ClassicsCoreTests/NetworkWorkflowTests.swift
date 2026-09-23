@@ -171,6 +171,29 @@ final class NetworkWorkflowTests:XCTestCase {
             XCTAssertNil(OnlineCatalogCache.load(url:url,under:root))
         }
     }
+    func testCatalogCacheEvictsOldestBeyondLimit() throws {
+        let data=Data([1,2,3,4]),hash=FileDigest.sha256(data:data)
+        let json: [String:Any] = ["version":1,"source":"Synthetic publisher","revision":"r1","license":"Synthetic test only",
+            "entries":[["gameID":"SLUS12345","title":"Test","url":"https://example.invalid/config","sha256":hash,"bytes":4]]]
+        let raw=try JSONSerialization.data(withJSONObject:json)
+        try temporary { root in
+            var urls=[URL]()
+            for i in 0..<(OnlineCatalogCache.maximumEntries + 2) {
+                let url=URL(string:"https://example.invalid/catalog-\(i).json")!
+                urls.append(url)
+                try OnlineCatalogCache.save(data:raw,url:url,under:root,
+                                            date:Date(timeIntervalSince1970:1_700_000_000 + Double(i)))
+                // Separate modification times so eviction order is defined.
+                try FileManager.default.setAttributes([.modificationDate:Date(timeIntervalSince1970:1_700_000_000 + Double(i))],
+                                                      ofItemAtPath:OnlineCatalogCache.file(for:url,under:root).path)
+            }
+            let remaining=try FileManager.default.contentsOfDirectory(atPath:OnlineCatalogCache.directory(under:root).path)
+            XCTAssertEqual(remaining.count, OnlineCatalogCache.maximumEntries)
+            XCTAssertNil(OnlineCatalogCache.load(url:urls[0],under:root))
+            XCTAssertNil(OnlineCatalogCache.load(url:urls[1],under:root))
+            XCTAssertNotNil(OnlineCatalogCache.load(url:urls.last!,under:root))
+        }
+    }
     func testForeignCatalogEntryDownloadsNothing() throws {
         let data=Data([1,2,3,4]),hash=FileDigest.sha256(data:data)
         func catalog(_ url: String) throws -> OnlineConfigCatalog {

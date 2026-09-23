@@ -1,3 +1,10 @@
+# Version 1.0 — release candidate 12 (RC12, build 21)
+
+- Import hardening from a hostile review of the new code: a damaged zero-length root no longer traps (it fails precisely), 1024-byte pages refuse import with a naming message (ECC is defined per 512-byte page), the surgical diff streams in bounded chunks with a free-space preflight, the offline catalog cache evicts oldest-beyond-16, and single-page-cluster plus wide-page geometries are proven by tests.
+- No user-visible behavior changes beyond more precise refusals; the RC11 import flow, verification and disclosure stand as documented.
+
+Still a release candidate: PS3 install/launch/save/disc/audio/manual/FTP acceptance, client Intel Monterey and M4 runtime, physical USB behavior and Developer ID signing/notarization remain open. Protected card formats, real-card geometry coverage, deeper/older/multi-track CHD, stream resume and curated CONFIG feeds stay deferred.
+
 # Version 1.0 — release candidate 11 (RC11, build 20)
 
 - Verified save import into new card files. Only `.ps2save` folders this app exported are accepted, and only into a new destination: the source card is copied first and never opened for writing. Allocation is strict first-fit over truly free clusters, subdirectory links match the reference layout, and every written page gets fresh ECC with a zero tail. Publication requires a full re-parse (new save byte-exact, all other saves unchanged), a surgical page diff, and a helper round trip; anything less publishes nothing. ECC is proven bit-exact against 128 independent vectors, and an independent card manager's filesystem check passes on import results. Console acceptance of imported cards remains open.

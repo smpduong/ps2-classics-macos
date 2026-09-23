@@ -180,6 +180,9 @@ public enum OnlineCatalogCache {
         let catalog: OnlineConfigCatalog
     }
     public static let maximumBytes = 2 * 1024 * 1024
+    /// At most this many cached catalogs (≤32 MiB total) are kept; older
+    /// files beyond the limit are removed after each save.
+    public static let maximumEntries = 16
 
     public static func directory(under base: URL? = nil) -> URL {
         let root = base ?? FileManager.default.urls(for:.applicationSupportDirectory,in:.userDomainMask)[0]
@@ -201,6 +204,27 @@ public enum OnlineCatalogCache {
                                                 attributes:[.posixPermissions:0o700])
         let record = File(url:url.absoluteString,retrievedAt:date,catalog:catalog)
         try JSONEncoder().encode(record).write(to:file(for:url,under:base),options:.atomic)
+        prune(under: base)
+    }
+    /// Keeps the cache directory bounded: beyond `maximumEntries` files, the
+    /// oldest by modification date go. Never touches anything that is not a
+    /// regular `.json` file, and never fails a save.
+    public static func prune(under base: URL? = nil) {
+        let directory = directory(under: base)
+        guard let items = try? FileManager.default.contentsOfDirectory(
+            at: directory, includingPropertiesForKeys: [.isRegularFileKey, .contentModificationDateKey]) else { return }
+        let caches = items.filter { $0.pathExtension == "json" }
+        guard caches.count > maximumEntries else { return }
+        let dated = caches.map { url -> (URL, Date) in
+            let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .contentModificationDateKey])
+            guard values?.isRegularFile == true else { return (url, .distantPast) }
+            return (url, values?.contentModificationDate ?? .distantPast)
+        }
+        .filter { $0.1 != .distantPast }
+        .sorted { $0.1 < $1.1 }
+        for (url, _) in dated.dropLast(maximumEntries) {
+            try? FileManager.default.removeItem(at: url)
+        }
     }
     /// A missing, damaged, oversized, mismatched or schema-invalid cache is
     /// simply absent — never trusted, never repaired silently.

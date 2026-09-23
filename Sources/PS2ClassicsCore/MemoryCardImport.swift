@@ -235,8 +235,20 @@ public enum MemoryCardImport {
             throw ConversionFailure(message: "Cannot stage the card copy.")
         }
         let size = UInt64(status.st_size)
+        // The workspace temporarily holds the staged copy plus verification
+        // and round-trip files; refuse early rather than failing mid-write.
+        let workspaceFree = (try? FileManager.default.attributesOfFileSystem(forPath: workspace.path)[.systemFreeSize] as? NSNumber)?.uint64Value ?? 0
+        let (needSpace, overflow) = size.multipliedReportingOverflow(by: 3)
+        guard !overflow, workspaceFree > needSpace + 64 * 1024 * 1024 else {
+            throw ConversionFailure(message: "Not enough free space for the import workspace (staged copy, verification and round trip). Free space first.")
+        }
         // 3. Baseline inventory of the copy (identical bytes to the source).
         let geometry = try S.readGeometry(fd: fd, size: size)
+        // ECC is defined per 512-byte page data area; other geometries stay
+        // on the read-only paths (browse/export) and whole-card backup.
+        guard geometry.pageLength == 512 else {
+            throw ConversionFailure(message: "This card uses \(geometry.pageLength)-byte pages, which individual-save import does not support. Whole-card backup remains available.")
+        }
         let reader = S.Reader(fd: fd, size: size, geometry: geometry)
         let baseline = try S.scan(fd: fd, size: size, runner: runner, progress: progress)
         guard !baseline.contains(where: { $0.name == manifest.save }) else {
@@ -250,18 +262,10 @@ public enum MemoryCardImport {
         }
         let rootCount = try S.rootEntryCount(reader, runner: runner)
         let rootChain = try reader.chainClusters(first: 0, label: "Root directory", runner: runner)
-        var rootEntries = [S.Dirent]()
-        for cluster in rootChain {
-            let blob = try reader.clusterData(geometry.allocOffset + cluster)
-            for i in 0..<Int(perCluster) {
-                if rootEntries.count >= Int(rootCount) { break }
-                rootEntries.append(try S.parseDirent(Data(blob[i * 512..<(i + 1) * 512]), index: rootEntries.count))
-            }
-        }
-        guard rootEntries.count == Int(rootCount),
-              rootEntries[0].name == ".", rootEntries[1].name == ".." else {
-            throw ConversionFailure(message: "The root directory does not start with its link entries. The filesystem is damaged.")
-        }
+        // listDirectory enforces the count range and link entries; direct
+        // indexing here would trap on a damaged zero-length root.
+        let rootEntries = try S.listDirectory(reader, first: 0, count: rootCount,
+                                              label: "Root directory", runner: runner)
         let slot: Int
         let newRootCount: UInt32
         if let reused = rootEntries[2...].firstIndex(where: { $0.mode & S.existsFlag == 0 }) {
@@ -462,32 +466,44 @@ public enum MemoryCardImport {
             }
         }
         // Surgical diff against the staged bytes: every differing page must
-        // be one this import wrote.
-        let staged = try Data(contentsOf: raw)
-        var live = Data(count: staged.count)
-        let liveCount: Int = live.withUnsafeMutableBytes { body in
-            var total = 0
-            while total < body.count {
-                if lseek(fd, off_t(total), SEEK_SET) < 0 { break }
-                let n = read(fd, body.baseAddress!.advanced(by: total), body.count - total)
-                if n < 0, errno == EINTR { continue }
-                guard n > 0 else { break }
-                total += n
+        // be one this import wrote. The staged copy lives on disk (not in
+        // memory) and both sides stream in bounded chunks.
+        let stagedURL = workspace.appendingPathComponent("staged.copy")
+        try FileManager.default.copyItem(at: raw, to: stagedURL)
+        let stagedFD = open(stagedURL.path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
+        guard stagedFD >= 0 else { throw ConversionFailure(message: "The import workspace could not be read.") }
+        defer { close(stagedFD) }
+        let chunk = 1024 * 1024
+        var diffOffset: UInt64 = 0
+        while diffOffset < size {
+            try runner.checkCancellation()
+            let count = Int(min(UInt64(chunk), size - diffOffset))
+            guard lseek(fd, off_t(diffOffset), SEEK_SET) >= 0,
+                  lseek(stagedFD, off_t(diffOffset), SEEK_SET) >= 0 else {
+                throw ConversionFailure(message: "The imported copy could not be re-read. Nothing was published.")
             }
-            return total
-        }
-        guard liveCount == staged.count else {
-            throw ConversionFailure(message: "The imported copy could not be re-read. Nothing was published.")
-        }
-        var offset = 0
-        while offset < staged.count {
-            let end = min(offset + Int(pageStride), staged.count)
-            if staged[offset..<end] != live[offset..<end] {
-                guard writtenPages.contains(UInt64(offset) / pageStride) else {
-                    throw ConversionFailure(message: "The import touched an unexpected page. Nothing was published.")
+            var liveBytes = [UInt8](repeating: 0, count: count)
+            var stagedBytes = [UInt8](repeating: 0, count: count)
+            let gotLive = liveBytes.withUnsafeMutableBytes { read(fd, $0.baseAddress!, $0.count) }
+            let gotStaged = stagedBytes.withUnsafeMutableBytes { read(stagedFD, $0.baseAddress!, $0.count) }
+            guard gotLive == count, gotStaged == count else {
+                throw ConversionFailure(message: "The imported copy could not be re-read. Nothing was published.")
+            }
+            if liveBytes != stagedBytes {
+                var page = diffOffset / pageStride
+                let last = (diffOffset + UInt64(count) - 1) / pageStride
+                while page <= last {
+                    let start = Int(page * pageStride < diffOffset ? 0 : page * pageStride - diffOffset)
+                    let end = min(Int((page + 1) * pageStride - diffOffset), count)
+                    if liveBytes[start..<end] != stagedBytes[start..<end] {
+                        guard writtenPages.contains(page) else {
+                            throw ConversionFailure(message: "The import touched an unexpected page. Nothing was published.")
+                        }
+                    }
+                    page += 1
                 }
             }
-            offset += Int(pageStride)
+            diffOffset += UInt64(count)
         }
         try runner.checkCancellation()
         progress(ConversionProgress(stage: "Round-trip checking copy", fraction: 0.9))

@@ -1,3 +1,9 @@
+# RC12 validation — 2026-09-23
+
+RC12/build 21 hardens the save importer with no behavior change beyond more precise refusals: trap-free damaged roots, geometry-scoped ECC (1024-byte pages refuse import while staying browsable), a streaming surgical diff with a free-space preflight, oldest-beyond-16 catalog eviction, and single-page-cluster plus hand-built wide-page geometry tests. The full Swift suite contains 195 tests (164 core and 31 app), with zero failures and no skipped required tests in the strict run.
+
+The strict gate records final evidence in `test-results/v21-release-checks.json` (all 16 checks passed, `passed: true`), including the fresh extracted-source rebuild, and exact artifact hashes in `dist/release-manifest-1.0-RC12.json`. A receipt is valid only when its top-level `passed` is true. No disc-conversion code changed, so no package rebuild was claimed; the four local ISOs re-passed read-only inspection. All acceptance gates from RC11 remain open (see DEFERRED_WORK.md for exact prerequisites).
+
 # RC11 validation — 2026-09-23
 
 RC11/build 20 adds verified save import into new card files plus exact card ECC. The full Swift suite contains 192 tests (161 core and 31 app), with zero failures and no skipped required tests in the strict run. New coverage is `MemoryCardImportTests` (export/import round trips on small and full-8 MiB geometries, collision/space/foreign/exclusive/cancel/type refusals, encrypted import round trip) and `MemoryCardECCTests` (128 independent bit-exact vectors, page layout, single-bit detection, slice-base regression). An independent card manager's filesystem check passes on import results, and its spare/write conventions (computed ECC, zero tails, link entries, first-fit allocation, JST timestamps) match the implementation. The helper is unchanged since RC10, so disc-conversion evidence carries over; the four local ISOs re-passed read-only inspection.
