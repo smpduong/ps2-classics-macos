@@ -85,6 +85,10 @@ All four originals passed descriptor, boot-ID and full SHA-256 checks and comple
 
 All four originals passed descriptor, boot-ID and full SHA-256 checks and completed packages through the release 1.0 RC4 tools (CD-sized 520,135,344 B / 21.31 s, DVD9 8,502,254,080 B / 337.8 s, two-disc 9,411,154,448 B / 373.31 s, SLUS20892 then SLUS21133 retained). Every original hash matched the known value and was unchanged before/after, and each build report carried the durable attempt fingerprint, fit/crop setting and support/asset hashes. Each package passed independent Python decoding **and** identity-bound native `verify-package`. Times are development-host measurements, not client promises. Temporary outputs were removed. This is still local workflow/integrity evidence, not console behavior. RC4 additionally adds an optional WAV->ATRAC3 encoder whose output was validated by independent decoding.
 
+## RC9 follow-up
+
+The `ps2-convert` helper is byte-identical to the RC8 manifest, so no disc-conversion behavior changed. All four originals passed read-only descriptor, boot-ID and full SHA-256 checks again with the rebuilt helper (`test-results/rom-inspection.json`, passed); every original hash matched and was unchanged before/after. No full ROMS package rebuild is claimed for RC9; RC8 package evidence carries over on identical helper bytes. This remains local workflow/integrity evidence, not console behavior.
+
 ## RC5 independent correction pass
 
 CD-sized: 520,135,344 bytes / 20.81 seconds; DVD9: 8,502,254,080 bytes / 339.09 seconds; two-disc: 9,411,154,448 bytes / 373.38 seconds. All four original SHA-256 values were unchanged, disc order/IDs retained, independent decoding and identity-bound verification passed. Exact tested tools match the RC5 release manifest. Results: `test-results/v14-real-packages.json`. No console compatibility is implied.

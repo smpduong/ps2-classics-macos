@@ -17,18 +17,47 @@ final class NetworkWorkflowTests:XCTestCase {
         }
         XCTAssertThrowsError(try FTPDestination(host:"localhost",directory:"/",username:"a:b"))
         XCTAssertThrowsError(try FTPDestination(host:"localhost",directory:"/",password:"a\nb"))
+        // Port bounds and overlong settings are rejected before any network use.
+        for port in [0, 65536, -1] {
+            XCTAssertThrowsError(try FTPDestination(host:"localhost",port:port,directory:"/packages"))
+        }
+        XCTAssertThrowsError(try FTPDestination(host:String(repeating:"a",count:300),directory:"/packages"))
+        XCTAssertThrowsError(try FTPDestination(host:"localhost",directory:"/"+String(repeating:"a",count:2000)))
+        XCTAssertThrowsError(try FTPDestination(host:"localhost",directory:"/packages",username:String(repeating:"u",count:129)))
+        XCTAssertThrowsError(try FTPDestination(host:"localhost",directory:"/packages",password:String(repeating:"p",count:257)))
         let setting=try FTPDestination(host:"127.0.0.1",directory:"/packages with spaces")
         XCTAssertEqual(try setting.url("/packages with spaces/x"),"ftp://127.0.0.1:21//packages%20with%20spaces/x")
         for url in ["http://example.com/a","https://user:secret@example.com/a","https://example.com/a#b","file:///tmp/a"] {
             XCTAssertThrowsError(try OnlineConfigCatalog.validateURL(URL(string:url)!))
         }
+        XCTAssertThrowsError(try OnlineConfigCatalog.validateURL(URL(string:"https://example.invalid/"+String(repeating:"a",count:2048))!))
+        // Schema negatives: uppercase digest, zero bytes, empty list, long title.
         let data=Data([1,2,3,4]),hash=FileDigest.sha256(data:data)
+        func catalogJSON(_ entry: [String:Any], entries: Any? = nil) -> Data {
+            let json: [String:Any] = ["version":1,"source":"Synthetic publisher","revision":"r1","license":"Synthetic test only","entries":entries ?? [entry]]
+            return try! JSONSerialization.data(withJSONObject:json)
+        }
+        let good:[String:Any]=["gameID":"SLUS12345","title":"Test","url":"https://example.invalid/config","sha256":hash,"bytes":4]
+        var upper=good;upper["sha256"]=hash.uppercased()
+        XCTAssertThrowsError(try OnlineConfigCatalog.decode(catalogJSON(upper)))
+        var zero=good;zero["bytes"]=0
+        XCTAssertThrowsError(try OnlineConfigCatalog.decode(catalogJSON(zero)))
+        var big=good;big["bytes"]=2*1024*1024
+        XCTAssertThrowsError(try OnlineConfigCatalog.decode(catalogJSON(big)))
+        var long=good;long["title"]=String(repeating:"t",count:257)
+        XCTAssertThrowsError(try OnlineConfigCatalog.decode(catalogJSON(long)))
+        let empty: [String:Any] = ["version":1,"source":"Synthetic publisher","revision":"r1","license":"Synthetic test only","entries":[]]
+        XCTAssertThrowsError(try OnlineConfigCatalog.decode(try JSONSerialization.data(withJSONObject:empty)))
         let json: [String:Any] = ["version":1,"source":"Synthetic publisher","revision":"r1","license":"Synthetic test only","entries":[["gameID":"SLUS12345","title":"Test","url":"https://example.invalid/config","sha256":hash,"bytes":4]]]
         let catalog=try OnlineConfigCatalog.decode(JSONSerialization.data(withJSONObject:json))
         try temporary {root in
             let url=try catalog.store(data,entry:catalog.entries[0],into:root,runner:ConversionRunner())
             XCTAssertEqual(try Data(contentsOf:url),data)
             XCTAssertTrue(FileManager.default.fileExists(atPath:url.deletingLastPathComponent().appendingPathComponent("catalog.json").path))
+            let download=try JSONSerialization.jsonObject(with:Data(contentsOf:url.deletingLastPathComponent().appendingPathComponent("download.json"))) as! [String:Any]
+            XCTAssertEqual(download["catalogSource"] as? String,"Synthetic publisher")
+            XCTAssertEqual(download["catalogRevision"] as? String,"r1")
+            XCTAssertEqual(download["sha256"] as? String,hash)
             XCTAssertThrowsError(try catalog.store(Data([4,3,2,1]),entry:catalog.entries[0],into:root,runner:ConversionRunner()))
             let cancelled=ConversionRunner();cancelled.cancel()
             XCTAssertThrowsError(try catalog.store(data,entry:catalog.entries[0],into:root,runner:cancelled))
@@ -78,9 +107,23 @@ final class NetworkWorkflowTests:XCTestCase {
             let target=try FTPDestination(host:"127.0.0.1",port:port,directory:"/",username:"fixture",password:"test-only")
             let final=try ConsoleTransfer.send(package:local,destination:target,helper:helper,runner:ConversionRunner())
             XCTAssertEqual(try FileDigest.sha256(remote.appendingPathComponent(String(final.dropFirst()))),before)
-            for mode in ["corrupt","truncate","oversize","deny"] {
+            // Every failure names the outcome: a created folder is left for
+            // inspection and identified; a denied directory starts nothing.
+            for mode in ["corrupt","truncate","oversize","storfail"] {
                 try Data(mode.utf8).write(to:remote.appendingPathComponent("mode"))
-                XCTAssertThrowsError(try ConsoleTransfer.send(package:local,destination:target,helper:helper,runner:ConversionRunner()),mode)
+                do {
+                    try ConsoleTransfer.send(package:local,destination:target,helper:helper,runner:ConversionRunner())
+                    XCTFail("mode \(mode) must fail")
+                } catch {
+                    XCTAssertTrue(error.localizedDescription.contains("Remote folder:"), "\(mode): \(error.localizedDescription)")
+                }
+            }
+            do {
+                try Data("deny".utf8).write(to:remote.appendingPathComponent("mode"))
+                try ConsoleTransfer.send(package:local,destination:target,helper:helper,runner:ConversionRunner())
+                XCTFail("denied directory must fail")
+            } catch {
+                XCTAssertTrue(error.localizedDescription.contains("No upload was started."), error.localizedDescription)
             }
             try Data().write(to:remote.appendingPathComponent("mode"))
             let cancelled=ConversionRunner()
@@ -89,6 +132,68 @@ final class NetworkWorkflowTests:XCTestCase {
             XCTAssertEqual(files.filter{$0.lastPathComponent=="package.pkg"}.count,1)
             XCTAssertEqual(try String(contentsOf:existing),"preserve")
             XCTAssertEqual(try FileDigest.sha256(local),before)
+        }
+    }
+    func testCatalogCacheRoundTripAndFailClosedLoads() throws {
+        let data=Data([1,2,3,4]),hash=FileDigest.sha256(data:data)
+        let json: [String:Any] = ["version":1,"source":"Synthetic publisher","revision":"r1","license":"Synthetic test only",
+            "entries":[["gameID":"SLUS12345","title":"Test","url":"https://example.invalid/config","sha256":hash,"bytes":4]]]
+        let raw=try JSONSerialization.data(withJSONObject:json)
+        let url=URL(string:"https://example.invalid/catalog.json")!
+        try temporary { root in
+            let date=Date(timeIntervalSince1970:1_700_000_000)
+            try OnlineCatalogCache.save(data:raw,url:url,under:root,date:date)
+            let snapshot=try XCTUnwrap(OnlineCatalogCache.load(url:url,under:root))
+            XCTAssertEqual(snapshot.catalog.source,"Synthetic publisher")
+            XCTAssertEqual(snapshot.catalog.revision,"r1")
+            XCTAssertEqual(snapshot.catalog.entries.count,1)
+            XCTAssertEqual(snapshot.retrievedAt,date)
+            XCTAssertNil(OnlineCatalogCache.load(url:URL(string:"https://example.invalid/other.json")!,under:root))
+            XCTAssertThrowsError(try OnlineCatalogCache.save(data:Data(repeating:0,count:OnlineCatalogCache.maximumBytes+1),url:url,under:root))
+            XCTAssertThrowsError(try OnlineCatalogCache.save(data:Data("not a catalog".utf8),url:url,under:root))
+            // A cache whose schema no longer validates loads as absent.
+            var tampered=try JSONSerialization.jsonObject(with:Data(contentsOf:OnlineCatalogCache.file(for:url,under:root))) as! [String:Any]
+            var inner=tampered["catalog"] as! [String:Any];inner["version"]=2;tampered["catalog"]=inner
+            try JSONSerialization.data(withJSONObject:tampered).write(to:OnlineCatalogCache.file(for:url,under:root),options:.atomic)
+            XCTAssertNil(OnlineCatalogCache.load(url:url,under:root))
+            // An oversized cache file loads as absent and never allocates blindly.
+            try Data(repeating:0,count:OnlineCatalogCache.maximumBytes+1).write(to:OnlineCatalogCache.file(for:url,under:root),options:.atomic)
+            XCTAssertNil(OnlineCatalogCache.load(url:url,under:root))
+            // A cache naming a different address loads as absent.
+            try OnlineCatalogCache.save(data:raw,url:url,under:root)
+            var renamed=try JSONSerialization.jsonObject(with:Data(contentsOf:OnlineCatalogCache.file(for:url,under:root))) as! [String:Any]
+            renamed["url"]="https://example.invalid/impostor.json"
+            try JSONSerialization.data(withJSONObject:renamed).write(to:OnlineCatalogCache.file(for:url,under:root),options:.atomic)
+            XCTAssertNil(OnlineCatalogCache.load(url:url,under:root))
+            try OnlineCatalogCache.save(data:raw,url:url,under:root)
+            XCTAssertNotNil(OnlineCatalogCache.load(url:url,under:root))
+            OnlineCatalogCache.remove(url:url,under:root)
+            XCTAssertNil(OnlineCatalogCache.load(url:url,under:root))
+        }
+    }
+    func testForeignCatalogEntryDownloadsNothing() throws {
+        let data=Data([1,2,3,4]),hash=FileDigest.sha256(data:data)
+        func catalog(_ url: String) throws -> OnlineConfigCatalog {
+            let json: [String:Any] = ["version":1,"source":"Synthetic publisher","revision":"r1","license":"Synthetic test only",
+                "entries":[["gameID":"SLUS12345","title":"Test","url":url,"sha256":hash,"bytes":4]]]
+            return try OnlineConfigCatalog.decode(JSONSerialization.data(withJSONObject:json))
+        }
+        let first=try catalog("https://example.invalid/first"), second=try catalog("https://example.invalid/second")
+        try temporary { root in
+            XCTAssertThrowsError(try first.download(second.entries[0],into:root,runner:ConversionRunner()))
+            XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath:root.path).isEmpty)
+        }
+    }
+    func testInvalidPackageNeverReachesTheNetwork() throws {
+        guard let path=ProcessInfo.processInfo.environment["PS2_TEST_HELPER"] else{throw XCTSkip("Set PS2_TEST_HELPER")}
+        try temporary { root in
+            let helper=URL(fileURLWithPath:path)
+            let garbage=root.appendingPathComponent("garbage.pkg");try Data("not a package".utf8).write(to:garbage)
+            let remote=root.appendingPathComponent("remote");try FileManager.default.createDirectory(at:remote,withIntermediateDirectories:false)
+            // Port 1 is never contacted: local verification must fail first.
+            let target=try FTPDestination(host:"127.0.0.1",port:1,directory:"/",username:"fixture",password:"test-only")
+            XCTAssertThrowsError(try ConsoleTransfer.send(package:garbage,destination:target,helper:helper,runner:ConversionRunner()))
+            XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath:remote.path),[])
         }
     }
 }

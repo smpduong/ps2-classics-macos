@@ -5,10 +5,10 @@ remains **open** for a final 1.0. It is deliberately explicit: a passing local
 suite is not evidence of console or client-hardware behaviour, and this build is
 therefore labelled a **1.0 release candidate**.
 
-Artifact under evaluation: `dist/PS2 Classics for Mac 1.0 RC8.zip`
-(`CFBundleShortVersionString` 1.0.0, `CFBundleVersion` 17, Universal
+Artifact under evaluation: `dist/PS2 Classics for Mac 1.0 RC9.zip`
+(`CFBundleShortVersionString` 1.0.0, `CFBundleVersion` 18, Universal
 `arm64` + `x86_64`, minimum macOS 12.0). Exact hashes are recorded in
-`dist/release-manifest-1.0-RC8.json` and `docs/VALIDATION.md`. RC7 build 16, RC6 build 15, RC5 build 14, RC4 build 13, RC3 build 12,
+`dist/release-manifest-1.0-RC9.json` and `docs/VALIDATION.md`. RC8 build 17, RC7 build 16, RC6 build 15, RC5 build 14, RC4 build 13, RC3 build 12,
 RC2 build 11, RC1 build 10 and all earlier archives are preserved.
 
 ## Gate history
@@ -46,7 +46,9 @@ RC2 build 11, RC1 build 10 and all earlier archives are preserved.
 | Bundle/archive/resource agreement | Closed | `scripts/release-manifest.py` on the extracted archive |
 | Licensing/source reproducibility | Closed locally (RC7) | Approved GPL-3.0-only, vendor notices and complete audio sources; strict extracted-source rebuild |
 | Card backups/manual packaging/FTP protocol | Closed locally (RC8) | Card integrity/restore/cancel tests; independently decoded manual pages from single/multi packages; local FTP success/failure/corruption tests. Hardware acceptance remains open |
-| Opt-in CONFIG catalog import | Implemented and tested locally (RC8) | Bounded schema/process tests and size/hash-verified local receipts; no default third-party feed claimed |
+| Opt-in CONFIG catalog import | Implemented and tested locally (RC8); offline cache and receipts added (RC9) | Bounded schema/process tests and size/hash-verified local receipts; cached-copy review/download/forget tests; no default third-party feed claimed |
+| Individual-save browse/export | Implemented and tested locally (RC9) | Bounded parser, synthetic small/full-size/encrypted fixtures, damage/cancellation/export regressions; cards never modified; import refused. Real-card and console save acceptance remain open |
+| Genuine parent-CHD rejection | Proven locally (RC9) | Reference-built and synthetic parent/child pairs rejected precisely; parent expands byte-exact. Broader parent/older/multi-track support remains deferred |
 | Supported-scope limitations visible | Closed | README, USER_GUIDE, PROJECT_PLAN, RELEASE_NOTES, FEATURE_LEDGER, DEFERRED_WORK |
 
 ## Open external gates
@@ -82,15 +84,15 @@ passes on this artifact, it may be promoted from release candidate to 1.0 with
 no code change; otherwise the artifact stays a candidate and the findings feed
 the next build.
 
-## Acceptance results template (RC8)
+## Acceptance results template (RC9)
 
 Copy this into a new record and fill it in on the actual hardware. Every row is
 performed on **this exact artifact**:
 
 ```
-Artifact: dist/PS2 Classics for Mac 1.0 RC8.zip
-SHA-256: copy archiveSHA256 from dist/release-manifest-1.0-RC8.json
-Version/build: 1.0.0 / 17
+Artifact: dist/PS2 Classics for Mac 1.0 RC9.zip
+SHA-256: copy archiveSHA256 from dist/release-manifest-1.0-RC9.json
+Version/build: 1.0.0 / 18
 
 [ ] PS3 install        result:            title/disc/CID used:
 [ ] PS3 launch         result:            observed:
@@ -106,7 +108,7 @@ Version/build: 1.0.0 / 17
 [ ] Developer ID signing               result:
 [ ] Notarization                       result:
 [x] Owner licence decision             LICENSE and LICENSING.md
-[x] Corresponding-source package       dist/source-baseline-1.0-RC8.tar.gz
+[x] Corresponding-source package       dist/source-baseline-1.0-RC9.tar.gz
 [ ] PS3 manual display/navigation      result:
 [ ] PS3 FTP transfer/install           server/folder/result:
 ```
@@ -114,4 +116,4 @@ Version/build: 1.0.0 / 17
 Signature integrity checked locally is **not** Developer ID/notarization
 acceptance; cross-compilation is **not** runtime acceptance.
 
-Record all client acceptance against the RC8 manifest hash; earlier candidate hashes do not identify this build.
+Record all client acceptance against the RC9 manifest hash; earlier candidate hashes do not identify this build.

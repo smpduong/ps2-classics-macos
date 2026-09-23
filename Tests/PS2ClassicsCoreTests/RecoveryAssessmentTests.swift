@@ -215,7 +215,7 @@ final class RecoveryAssessmentTests: XCTestCase {
 
         record = matchingRecord(jobID: jobID)
         record.assetHashes = ["icon": "tampered"]
-        XCTAssertEqual(rejected(record), "the completion record's artwork or sound hashes do not match this attempt")
+        XCTAssertEqual(rejected(record), "the completion record's artwork, sound or manual hashes do not match this attempt")
 
         record = matchingRecord(jobID: jobID)
         record.discs = Array(record.discs.prefix(1))

@@ -156,9 +156,65 @@ public struct OnlineConfigCatalog: Codable, Sendable {
         let receipt=try JSONEncoder().encode(self)
         try receipt.write(to:directory.appendingPathComponent("catalog.json"),options:.withoutOverwriting)
         let downloaded: [String:Any] = ["version":1,"retrievedAt":ISO8601DateFormatter().string(from:Date()),
+            "catalogSource":source,"catalogRevision":revision,"catalogLicense":license,
             "url":entry.url.absoluteString,"sha256":entry.sha256,"bytes":entry.bytes]
         try JSONSerialization.data(withJSONObject:downloaded,options:[.prettyPrinted,.sortedKeys])
             .write(to:directory.appendingPathComponent("download.json"),options:.withoutOverwriting)
         try runner.checkCancellation();complete=true;return output
+    }
+}
+
+/// Offline last-known-good catalog storage. A successfully reviewed catalog is
+/// kept verbatim (as validated JSON) so entries stay reviewable and
+/// downloadable without a network connection. The cache is never fetched
+/// automatically, never refreshes itself, and never changes project
+/// selections; only an explicit user load replaces it.
+public enum OnlineCatalogCache {
+    public struct Snapshot: Sendable {
+        public let catalog: OnlineConfigCatalog
+        public let retrievedAt: Date
+    }
+    private struct File: Codable {
+        let url: String
+        let retrievedAt: Date
+        let catalog: OnlineConfigCatalog
+    }
+    public static let maximumBytes = 2 * 1024 * 1024
+
+    public static func directory(under base: URL? = nil) -> URL {
+        let root = base ?? FileManager.default.urls(for:.applicationSupportDirectory,in:.userDomainMask)[0]
+            .appendingPathComponent("PS2 Classics for Mac")
+        return root.appendingPathComponent("OnlineCatalogs")
+    }
+    static func file(for url: URL, under base: URL? = nil) -> URL {
+        directory(under: base).appendingPathComponent(FileDigest.sha256(data:Data(url.absoluteString.utf8))+".json")
+    }
+    /// Stores the exact reviewed bytes after schema validation. Oversized or
+    /// invalid data is rejected; nothing is cached.
+    public static func save(data: Data, url: URL, under base: URL? = nil, date: Date = Date()) throws {
+        try OnlineConfigCatalog.validateURL(url)
+        guard data.count <= maximumBytes else {
+            throw ConversionFailure(message:"CONFIG catalog exceeds 2 MB and was not cached.")
+        }
+        let catalog = try OnlineConfigCatalog.decode(data)
+        try FileManager.default.createDirectory(at:directory(under:base),withIntermediateDirectories:true,
+                                                attributes:[.posixPermissions:0o700])
+        let record = File(url:url.absoluteString,retrievedAt:date,catalog:catalog)
+        try JSONEncoder().encode(record).write(to:file(for:url,under:base),options:.atomic)
+    }
+    /// A missing, damaged, oversized, mismatched or schema-invalid cache is
+    /// simply absent — never trusted, never repaired silently.
+    public static func load(url: URL, under base: URL? = nil) -> Snapshot? {
+        guard (try? OnlineConfigCatalog.validateURL(url)) != nil,
+              let data = try? BoundedFile.read(file(for:url,under:base),maximum:maximumBytes),
+              let record = try? JSONDecoder().decode(File.self,from:data),
+              record.url == url.absoluteString,
+              let checked = try? OnlineConfigCatalog.decode(try JSONEncoder().encode(record.catalog)) else {
+            return nil
+        }
+        return Snapshot(catalog:checked,retrievedAt:record.retrievedAt)
+    }
+    public static func remove(url: URL, under base: URL? = nil) {
+        try? FileManager.default.removeItem(at:file(for:url,under:base))
     }
 }

@@ -470,6 +470,7 @@ struct CardView: View {
     @State private var message = ""
     @State private var output: URL?
     @State private var runner: ConversionRunner?
+    @State private var saves: [MemoryCardSaves.Save]?
     var body: some View {
         VStack(alignment:.leading,spacing:22) {
             Text("Memory cards").font(.largeTitle.bold())
@@ -480,6 +481,20 @@ struct CardView: View {
             HStack {
                 Button("Create verified backup…") { backupCard() }.disabled(busy || source == nil)
                 Button("Restore backup to new file…") { restoreCard() }.disabled(busy)
+            }
+            HStack {
+                Button("Browse saves…") { browseSaves() }.disabled(busy || source == nil)
+                Text("Read-only listing. Exports are verified copies; the card is never modified.").font(.caption).foregroundColor(.secondary)
+            }
+            if let saves {
+                ForEach(saves, id: \.name) { save in
+                    HStack {
+                        Text("\(save.name): \(save.files.count) files, \(save.totalBytes) bytes").font(.caption).textSelection(.enabled)
+                        Spacer()
+                        Button("Export save…") { exportSave(save.name) }.disabled(busy)
+                    }
+                }
+                if saves.isEmpty { Text("No saves found on this card. Whole-card backup remains available.").font(.caption) }
             }
             if busy { ProgressView(value:progress); Button("Cancel") { runner?.cancel() } }
             else { Button("Convert and verify…",action:convert).disabled(source==nil) }
@@ -520,6 +535,45 @@ struct CardView: View {
                     else { try MemoryCardBackup.create(source:source,destination:target,helper:helper,runner:session,progress:update) }
                 }.value
                 output=target;message=restore ? "Restored copy verified. Existing cards were preserved." : "Backup verified byte-for-byte. Individual saved-game health is not checked."
+            } catch {message=error.localizedDescription}
+            busy=false;runner=nil;StudioModel.shared.endUtility(owned)
+        }
+    }
+    private func browseSaves() {
+        guard let source else { return }
+        let session=ConversionRunner()
+        guard let owned=StudioModel.shared.beginUtility(.inspect,cancel:{session.cancel()}) else {message="Another operation is already running.";return}
+        runner=session;busy=true;output=nil;saves=nil;message="Reading saves…";progress=0
+        let helper=StudioModel.shared.helperURL
+        Task {
+            do {
+                let found=try await Task.detached {
+                    try MemoryCardSaves.inventory(card:source,helper:helper,runner:session) { update in
+                        Task { @MainActor in guard busy, runner === session else{return};progress=update.fraction }
+                    }
+                }.value
+                saves=found;message=found.isEmpty ? "No saves found. The card itself is unchanged." : "Found \(found.count) saves. Select Export save for a verified copy."
+            } catch {message=error.localizedDescription}
+            busy=false;runner=nil;StudioModel.shared.endUtility(owned)
+        }
+    }
+    private func exportSave(_ name: String) {
+        guard let source else { return }
+        let picker=NSOpenPanel();picker.canChooseFiles=false;picker.canChooseDirectories=true;picker.canCreateDirectories=true
+        picker.message="Choose a folder. A new \(name).ps2save folder will hold the verified files and a manifest."
+        guard picker.runModal() == .OK, let parent=picker.url else { return }
+        let session=ConversionRunner()
+        guard let owned=StudioModel.shared.beginUtility(.convert,cancel:{session.cancel()}) else {message="Another operation is already running.";return}
+        runner=session;busy=true;output=nil;message="Exporting save…";progress=0
+        let helper=StudioModel.shared.helperURL
+        Task {
+            do {
+                let target=try await Task.detached {
+                    try MemoryCardSaves.export(save:name,card:source,into:parent,helper:helper,runner:session) { update in
+                        Task { @MainActor in guard busy, runner === session else{return};progress=update.fraction }
+                    }
+                }.value
+                output=target;message="Save exported and re-verified. The card is unchanged."
             } catch {message=error.localizedDescription}
             busy=false;runner=nil;StudioModel.shared.endUtility(owned)
         }

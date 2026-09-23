@@ -24,6 +24,18 @@ Schema version 1:
 
 The example is a schema illustration, not a working catalog. There may be 1–10,000 entries; game IDs must have four uppercase letters followed by five digits. Duplicate game-ID/digest pairs are rejected. Publisher, revision and license must be nonempty and at most 512 characters; titles are at most 256. Downloads must exactly match the advertised size/hash and must not have the encrypted PS2/NPD headers. Multiple variants may share a game ID if their digests differ.
 
-A verified copy is saved in a fresh `CONFIG-UUID` folder, with `catalog.json` and `download.json` receipts. The latter records retrieval time, exact download URL, size and hash. The app does not send ROMs, support files, local paths or telemetry to the catalog server. The ordinary HTTPS request necessarily reveals the requesting IP to that server. Local-only use remains available.
+A verified copy is saved in a fresh `CONFIG-UUID` folder, with `catalog.json` and `download.json` receipts. The download receipt records the catalog source, revision and license alongside the retrieval time, exact download URL, size and hash. The app does not send ROMs, support files, local paths or telemetry to the catalog server. The ordinary HTTPS request necessarily reveals the requesting IP to that server. Local-only use remains available.
+
+## Offline cached copies
+
+After a catalog loads successfully, the app keeps the reviewed bytes under
+`~/Library/Application Support/PS2 Classics for Mac/OnlineCatalogs/`,
+filed by the SHA-256 of the catalog address with the retrieval date. Entering
+the same address later shows the cached date and offers **Use cached copy**,
+which loads the catalog with no network use; every download from it still
+verifies size and SHA-256 exactly. **Forget** deletes the copy. The cache is
+never read automatically, never refreshes itself, and never alters project
+selections — only another explicit **Load / refresh** replaces it. A damaged,
+oversized or schema-invalid cache loads as absent.
 
 Network execution uses macOS's system curl with its user configuration and proxy settings disabled, certificate verification enabled and bounded response reads. No network connection is made during startup or project loading. See the curl project's [option documentation](https://curl.se/docs/manpage.html) for the underlying transfer behavior.

@@ -38,8 +38,14 @@ class Handler(socketserver.StreamRequestHandler):
     elif command=='SIZE':
      p=path(arg)
      reply('213 %d'%p.stat().st_size if p.is_file() else '550 Missing file')
-    elif command=='MDTM':reply('213 20260101000000')
     elif command in ('STOR','RETR'):
+     if command=='STOR' and mode=='storfail':
+      connection,_=self.data.accept();self.data.close();self.data=None
+      with connection:
+       try:connection.recv(65536)
+       except OSError:pass
+      reply('426 Connection closed; transfer aborted')
+      continue
      reply('150 Opening data connection');connection,_=self.data.accept();self.data.close();self.data=None
      with connection:
       if command=='STOR':

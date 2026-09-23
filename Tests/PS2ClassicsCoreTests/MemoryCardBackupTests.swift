@@ -56,4 +56,27 @@ final class MemoryCardBackupTests: XCTestCase {
             XCTAssertFalse(FileManager.default.fileExists(atPath:output.path))
         }
     }
+    func testExistingDestinationMissingPayloadAndSwappedCardFailClosed() throws {
+        try temporary { root, helper in
+            let source=try card(root), backup=root.appendingPathComponent("backup.ps2cardbackup")
+            let record=try MemoryCardBackup.create(source:source,destination:backup,helper:helper,runner:ConversionRunner())
+            let untouched=try FileDigest.sha256(backup.appendingPathComponent(record.file))
+            // A second backup to the same name is refused; the first is intact.
+            XCTAssertThrowsError(try MemoryCardBackup.create(source:source,destination:backup,helper:helper,runner:ConversionRunner()))
+            XCTAssertEqual(try FileDigest.sha256(backup.appendingPathComponent(record.file)),untouched)
+            // A manifest whose payload file is missing restores nothing.
+            let missing=root.appendingPathComponent("missing.VMC")
+            try FileManager.default.removeItem(at:backup.appendingPathComponent(record.file))
+            XCTAssertThrowsError(try MemoryCardBackup.restore(backup:backup,destination:missing,helper:helper,runner:ConversionRunner()))
+            XCTAssertFalse(FileManager.default.fileExists(atPath:missing.path))
+            // A same-size but different valid card does not match the manifest.
+            var other=Data(repeating:7,count:8*1024*1024/512*528)
+            other.replaceSubrange(0..<28,with:Data("Sony PS2 Memory Card Format ".utf8))
+            try other.write(to:backup.appendingPathComponent(record.file))
+            let swapped=root.appendingPathComponent("swapped.VMC")
+            XCTAssertThrowsError(try MemoryCardBackup.restore(backup:backup,destination:swapped,helper:helper,runner:ConversionRunner()))
+            XCTAssertFalse(FileManager.default.fileExists(atPath:swapped.path))
+            XCTAssertEqual(try FileDigest.sha256(source),record.sha256)
+        }
+    }
 }

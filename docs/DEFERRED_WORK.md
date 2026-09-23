@@ -27,7 +27,7 @@ redistribution of its CONFIG data, with a stable revision or checksum mechanism
 established for a selected CONFIG source in this project. This is an open
 research/approval question, not proof that no usable source exists. A pinned
 repository commit with recorded content digests can supply version identity;
-a dedicated checksum endpoint is not intrinsically required. RC8 adds a generic user-supplied HTTPS catalog importer; it does not select an upstream or bundle newly approved CONFIG data.
+a dedicated checksum endpoint is not intrinsically required. RC8 adds a generic user-supplied HTTPS catalog importer; it does not select an upstream or bundle newly approved CONFIG data. RC9 adds an offline last-known-good cache of reviewed catalogs and records the catalog source/revision/license in every download receipt; refresh stays explicit and project selections still never change silently.
 
 **Curated-feed acceptance design (generic importing is implemented in RC8):**
 - User-initiated, opt-in download only; never automatic and never a background
@@ -64,11 +64,26 @@ reference. Decoder openability is explicitly not sufficient.
 **Until then:** keep exact rejection diagnostics and never discard or flatten
 content silently.
 
+**RC9 evidence:** the parent rejection is now proven against genuine
+reference images, not only byte-flip proxies. A MAME 0.289 chdman built from
+upstream source (tools-only build; independent of the pinned libchdr)
+produced a real parent/child DVD pair; the helper expands the parent
+byte-exact and rejects the child with the precise parent message on both
+inspect and extract paths. `scripts/synth_chd.py` additionally builds
+spec-faithful uncompressed parent/child pairs from the pinned v5 layout
+(parentsha1 at header bytes 104–124, uncompressed map entries, metadata
+blobs); the parent passes the bundled decoder end-to-end and the child,
+differing only in a real nonzero parentsha1, is rejected precisely. The
+committed `test-chd.py` matrix now covers this genuine pair alongside the
+proxies. Older (v1–v4) CHDs still have no independently produced fixtures —
+only the version-field rejection — and multi-track support still lacks a
+proven console representation for track timing/audio.
+
 ## 4. Manuals, card backups and console transfer — implemented locally in RC8
 
-- Manuals use the `USRDIR/CONTENT/manual.idx` and numbered `.dxt` page format found in pinned pop-fe2 commit `2afb9a3544e26ec1927f6389857240a0fe4bc205`: 960×768, eight-byte little-endian dimensions plus opaque BC1 blocks. The renderer/encoder is original native code. Independent FFmpeg decoding and real synthetic package extraction check the result. PS3 display/navigation remains an external acceptance case.
-- Whole-card backup/restoration copies first, checks framing, performs native round-trip validation and verifies hashes. Existing files are not overwritten. Individual-save browsing/editing is still additional work: it requires a bounded, validated PS2 card filesystem parser and non-destructive save import/export fixtures.
-- FTP was selected from the user's protocol history. A local loopback server tests upload, read-back, corruption, truncation, extra bytes, failure and cancellation. No real console address, credentials or destination was supplied, and no real console was contacted. Real server command/path compatibility and installation are separate acceptance cases.
+- Manuals use the `USRDIR/CONTENT/manual.idx` and numbered `.dxt` page format found in pinned pop-fe2 commit `2afb9a3544e26ec1927f6389857240a0fe4bc205`: 960×768, eight-byte little-endian dimensions plus opaque BC1 blocks. The renderer/encoder is original native code. Independent FFmpeg decoding and real synthetic package extraction check the result. PS3 display/navigation remains an external acceptance case. RC9 locks in the probed `/Rotate` behavior (rotated pages render upright) as a regression test.
+- Whole-card backup/restoration copies first, checks framing, performs native round-trip validation and verifies hashes. Existing files are not overwritten. Individual-save browsing and verified export are implemented in RC9 on synthetic fixtures (bounded parser, see below); save import (writing) is still deferred.
+- FTP was selected from the user's protocol history. A local loopback server tests upload, read-back, corruption, truncation, extra bytes, failure and cancellation. No real console address, credentials or destination was supplied, and no real console was contacted. Real server command/path compatibility and installation are separate acceptance cases. RC9 adds an upload-abort mode and locks failure-message folder reporting into regressions.
 
 ## 5. Mid-stream resume
 
@@ -76,8 +91,48 @@ content silently.
 crash-consistent partial records for the encrypted image format. Retain
 verified-stage reuse on retry; do not append to arbitrary partial ciphertext.
 
+**RC9 design finding (implements nothing yet):** the encryption stream is not
+byte-reproducible across runs by construction — `Sources/PS2Convert/main.c`
+seals each image with 16 `arc4random` nonce bytes in the header (offset
+0x40), so two encryptions of identical inputs differ in the header while
+every segment ciphertext stays deterministic. Any future resume must therefore
+reuse the partial's own header verbatim and authenticate the retained prefix
+by re-encrypting the source groups and comparing bytes (never by regenerating
+a header or trusting a length field). The retained journal must bind source
+bytes, key, content ID, disc/profile and helper revision; persist entries only
+after fsync; and be kill-tested at data, journal and publication boundaries.
+The fail-closed half already holds: SIGKILL mid-build publishes nothing and
+trusts nothing (`scripts/test-recovery-workflow.py`), and killed CHD
+extraction publishes no partial (`scripts/test-chd.py`). The next
+implementable slice is the nonce-aware prefix-verified resume journal
+described above — scoped, but still larger than a safe single pass, so it
+remains deferred with this exact design.
+
 ## Concrete remaining implementation work
 
 For parent CHDs, carry an explicit parent selection through import, saved project, queue and build fingerprints; validate parent SHA-1 identity before opening; bound ancestry depth and cycles; preserve both inputs; independently compare expanded bytes against MAME. Older versions need their own bounded header/map validation and independently produced fixtures. Multi-track formats additionally need a proven console representation for track timing and audio; silently dropping audio is not acceptable.
 
 For mid-stream resume, introduce an owned partial-stage journal tied to source/key/content/profile hashes, persist only complete authenticated groups after syncing them, verify the retained prefix before resuming, and test forced termination at every journal/data publication boundary. Integrate partial-stage retention with writer locks, cache limits, cancellation and recovery. This is unfinished engineering work; completed-stage reuse must not be relabelled as stream resume.
+
+## 6. Individual-save import (browse/export implemented in RC9)
+
+RC9 adds a bounded read-only card filesystem parser (`MemoryCardSaves`):
+superblock geometry, double-indirect FAT and 512-byte directory entries per
+Ross Ridge's public-domain filesystem description (corroborated by the PS2
+developer wiki), with cycle/range/length/name cross-checks, exact-size
+validation, and precise rejection of the `+16 KiB` extended form. Save listing
+and verified export (exclusive `<name>.ps2save` folders with hash manifests,
+card opened read-only, source re-hashed before/after) are proven on synthetic
+8 MiB and small-geometry fixtures plus an encrypted-card round trip; real-card
+and 16/32/64 MiB geometry coverage is still synthetic-only and PS3
+save-acceptance remains external.
+
+Import (writing saves back) stays deferred. Prerequisites: FAT allocation and
+directory-entry creation that cannot strand chains on failure; ECC spare-byte
+handling pinned down (the helper encrypts spare bytes opaquely and never
+recomputes them, so an importer must define where valid ECC comes from);
+allocation-buddy testing with kill cases at every write boundary; and proof on
+expendable synthetic cards that a failed import leaves the original card
+restorable from its verified backup. Until then, imports are refused rather
+than approximated, and the whole-card backup remains the safe path for
+damaged or protected cards.

@@ -1,3 +1,13 @@
+# Version 1.0 — release candidate 9 (RC9, build 18)
+
+- Read-only save browsing with verified per-save export. The Memory cards view lists each save folder with file counts and byte totals; export copies one save into a new `.ps2save` folder with a SHA-256 manifest, re-reading every file from the card. Cards are never modified, existing exports are never replaced, and save import (writing back) is not offered. Proven on synthetic small and full-8 MiB cards plus an encrypted round trip.
+- Offline CONFIG catalog cache. Reviewed catalogs are kept verbatim with their retrieval date and can be reloaded with no network use; downloads still verify size and hash, refresh stays explicit, and project selections never change silently. Download receipts now record the catalog source, revision and license.
+- Genuine parent-CHD rejection evidence. A real MAME 0.289 reference-built parent/child pair and a spec-faithful synthetic pair prove the precise parent message beyond byte-flip proxies; the parent expands byte-exact through the helper.
+- Hardening regressions across the RC8 workflows: rotated-PDF upright rendering, FTP upload-abort and failure folder-reporting, backup missing/swapped payload binding, foreign catalog entries, pre-network package rejection, multi-frame/oversized/symlinked manuals and catalog schema negatives.
+- Design records without implementation: the encryption nonce constraint that any future stream-resume journal must satisfy, and the exact save-import prerequisites (FAT allocation, ECC handling, kill-tested writes).
+
+Still a release candidate: PS3 install/launch/save/disc/audio/manual/FTP acceptance, client Intel Monterey and M4 runtime, physical USB behavior and Developer ID signing/notarization remain open. The helper binary is byte-identical to RC8, so RC8 conversion evidence carries over; this build re-validates inspection read-only on the four local ISOs.
+
 # Version 1.0 — release candidate 8 (RC8, build 17)
 
 - Whole-card verified backup/restore creates new copies and preserves existing saves. It checks conversion integrity, not individual saved-game health.

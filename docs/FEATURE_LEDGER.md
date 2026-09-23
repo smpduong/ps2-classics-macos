@@ -1,4 +1,4 @@
-# Feature ledger — PS2 Classics for Mac 1.0 RC8
+# Feature ledger — PS2 Classics for Mac 1.0 RC9
 
 This ledger is deliberately honest about what is **implemented and tested**,
 what is **experimental**, and what is **deferred with a concrete prerequisite**.
@@ -6,7 +6,16 @@ A deferred optional feature is not an unresolved defect in an advertised
 capability; those deferred features remain outside the advertised scope. No placeholder or disabled
 buttons are added for work that is not done.
 
-## Implemented and tested locally
+## Implemented and tested locally (RC9 additions)
+
+| Area | Change | Evidence |
+| --- | --- | --- |
+| Individual-save browse/export | Bounded read-only card filesystem parser (geometry, double-indirect FAT, dirent cross-checks); verified export into exclusive `.ps2save` folders with hash manifests; cards never modified; extended 16 KiB form and import refused precisely | `MemoryCardSavesTests` inventory/export/damage/cancellation on synthetic small and full-8 MiB cards plus encrypted round trip; `scripts/synth_card.py` independent builder/reader; in-app Browse/Export in Memory cards |
+| Offline CONFIG catalog cache | Reviewed catalogs cached verbatim with retrieval date; explicit offline reuse with unchanged size/hash download checks; explicit refresh/forget; damaged caches load as absent; download receipts now carry catalog source/revision/license | `NetworkWorkflowTests` cache round-trip and fail-closed loads; `OnlineConfigView` cached-copy flow |
+| Genuine parent-CHD rejection | Real reference-built parent/child pair plus spec-faithful synthetic pair prove precise parent rejection beyond byte-flip proxies | `test-chd.py` genuine-pair block; `scripts/synth_chd.py` self-test; MAME 0.289 reference built from upstream source |
+| RC8 hardening regressions | Rotated-PDF upright rendering locked in; upload-abort and failure folder-reporting covered; foreign catalog entries, pre-network package rejection, missing/swapped card payloads, multi-frame/oversized/symlinked manuals, schema negatives | `SoftwareManualTests`, `NetworkWorkflowTests`, `MemoryCardBackupTests` additions; loopback FTP `storfail` mode |
+
+## Implemented and tested locally (RC8)
 
 | Area | Change | Evidence |
 | --- | --- | --- |
@@ -41,7 +50,9 @@ buttons are added for work that is not done.
 
 - A curated public CONFIG feed with established file-level provenance. The generic HTTPS importer is available; there is no approved default catalog or automatic background updater.
 - Multi-track/audio CUE and CHD, older/parent-dependent CHD. These need explicit geometry, track/pregap/subchannel and parent-identity handling plus independent reference fixtures. Supported v5 single-data-track import remains unchanged.
-- Individual-save browsing/editing and protected console-specific card formats. Whole-card backup/restore is now implemented.
-- Mid-stream encryption resume. Completed verified stages can be reused; partially written ciphertext still cannot be resumed. Checkpoint authentication and crash-consistent ownership require further implementation and fault-injection tests.
+- Individual-save import (writing saves back into a card). Browse and verified
+  export are now implemented; import needs FAT allocation, pinned ECC handling
+  and kill-tested write boundaries.
+- Mid-stream encryption resume. Completed verified stages can be reused; partially written ciphertext still cannot be resumed. The RC9 design record pins the nonce constraint and the exact journal slice; fault-injection tests for the fail-closed half already exist.
 
 See [DEFERRED_WORK.md](DEFERRED_WORK.md) for the remaining engineering scope. Real hardware acceptance and signing are separate from these enhancements.

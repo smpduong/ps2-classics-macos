@@ -37,6 +37,27 @@ with tempfile.TemporaryDirectory(prefix='ps2-chd-check-') as tmp:
  trunc=d/'truncated.chd';trunc.write_bytes(original[:130]);run([a.helper,'extract-chd',trunc,d/'bad.iso'],False)
  cue=d/'mixed.cue';cue.write_text('FILE "MODE1-2352.bin" BINARY\n TRACK 01 MODE1/2352\n INDEX 01 00:00:00\n TRACK 02 AUDIO\n INDEX 01 00:01:00\n')
  mixed=d/'mixed.chd';run([a.chdman,'createcd','-i',cue,'-o',mixed,'-np','2']);run([a.helper,'inspect-chd',mixed],False)
+ # Genuine parent-dependent pair from the pinned v5 layout (scripts/synth_chd.py,
+ # no chdman needed): the parent must expand byte-exact through the helper, and
+ # the child — identical except a real nonzero parentsha1 — must be rejected
+ # precisely rather than misread. This complements the byte-flip proxies above.
+ synth=importlib.machinery.SourceFileLoader('synth',str(Path(__file__).with_name('synth_chd.py'))).load_module()
+ logical=bytes(wf.synthetic_iso());assert len(logical)%synth.HUNK==0
+ genuine_parent=d/'genuine-parent.chd';genuine_child=d/'genuine-child.chd'
+ combined=synth.write_dvd_parent(genuine_parent,logical)
+ probe=json.loads(run([a.helper,'inspect-chd',genuine_parent]).stdout)
+ assert probe['gameID']=='SLUS12345' and probe['expandedByteCount']==len(logical),probe
+ genuine_out=d/'genuine-parent.image';run([a.helper,'extract-chd',genuine_parent,genuine_out])
+ assert genuine_out.read_bytes()==logical
+ before_parent=hashlib.sha256(genuine_parent.read_bytes()).hexdigest()
+ synth.write_dvd_child(genuine_child,genuine_parent,combined)
+ assert genuine_child.read_bytes()[104:124]==combined!=bytes(20)
+ for command in (['inspect-chd',genuine_child],['extract-chd',genuine_child,d/'genuine-child.image']):
+  failed=run([a.helper]+command,False)
+  assert 'Parent-dependent CHDs must be flattened' in failed.stderr,(command,failed.stderr[-500:])
+ assert not (d/'genuine-child.image').exists()
+ assert hashlib.sha256(genuine_parent.read_bytes()).hexdigest()==before_parent
+ print('Passed genuine parent/child rejection',file=sys.stderr,flush=True)
  # Fail a real write and interrupt extraction; neither may publish partial output.
  def limit_output():resource.setrlimit(resource.RLIMIT_FSIZE,(1024,1024))
  fault=d/'write-fault.iso'
@@ -60,4 +81,4 @@ with tempfile.TemporaryDirectory(prefix='ps2-chd-check-') as tmp:
   project=dict(version=1,title='CHD workflow fixture',titleID='SLUS12345',discs=[dict(id=str(uuid.uuid4()),source=chd.as_uri(),gameID='SLUS12345',configSource='Synthetic')],support=dict(key=(d/'key').as_uri(),rap=(d/'rap').as_uri(),logo=(d/'logo').as_uri(),card=(d/'card').as_uri(),contentID=wf.CID),cropArtwork=False,output=out.as_uri())
   manifest=d/'project.ps2project';manifest.write_text(json.dumps(project));run([a.builder,manifest,a.helper]);wf.check_package(out,[source],'SLUS12345');print('Passed CHD package:',chd.name,file=sys.stderr,flush=True)
  assert not list(d.glob('.ps2-build-*')) and not list(d.glob('*.partial.*'))
- print(json.dumps(dict(passed=True,helper=wf.binary_info(a.helper),builder=wf.binary_info(a.builder),chdman=str(a.chdman),exactExtractions=len(fixtures),packages=2,negativeCases=7)))
+ print(json.dumps(dict(passed=True,helper=wf.binary_info(a.helper),builder=wf.binary_info(a.builder),chdman=str(a.chdman),exactExtractions=len(fixtures),packages=2,negativeCases=8)))

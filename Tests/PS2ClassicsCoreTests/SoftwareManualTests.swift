@@ -83,4 +83,75 @@ final class SoftwareManualTests: XCTestCase {
             XCTAssertFalse(FileManager.default.fileExists(atPath:dir.path))
         }
     }
+    /// A /Rotate 90 page must render upright (red moves top -> right), not
+    /// reuse the unrotated layout. Locks in the independently probed behavior.
+    func testRotatedPDFPageRendersUpright() throws {
+        func rawPDF(rotate: Int?) -> Data {
+            let stream=Data("0 0 1 rg 0 0 960 768 re f 1 0 0 rg 0 384 960 384 re f".utf8)
+            var objects=[Data("<< /Type /Catalog /Pages 2 0 R >>".utf8),
+                         Data("<< /Type /Pages /Kids [3 0 R] /Count 1 >>".utf8)]
+            var page="<< /Type /Page /Parent 2 0 R /MediaBox [0 0 960 768]"
+            if let rotate { page+=" /Rotate \(rotate)" }
+            page+=" /Resources << >> /Contents 4 0 R >>"
+            objects.append(Data(page.utf8))
+            objects.append(Data("<< /Length \(stream.count) >>\nstream\n".utf8)+stream+Data("\nendstream".utf8))
+            var result=Data("%PDF-1.4\n".utf8);var offsets=[0]
+            for (i,obj) in objects.enumerated() {
+                offsets.append(result.count)
+                result+=Data("\(i+1) 0 obj\n".utf8)+obj+Data("\nendobj\n".utf8)
+            }
+            let start=result.count
+            result+=Data("xref\n0 5\n0000000000 65535 f \n".utf8)
+            for off in offsets.dropFirst() { result+=Data(String(format:"%010d 00000 n \n",off).utf8) }
+            return result+Data("trailer\n<< /Size 5 /Root 1 0 R >>\nstartxref\n\(start)\n%%EOF\n".utf8)
+        }
+        try temporary { root in
+            let source=root.appendingPathComponent("rotated.pdf"),dir=root.appendingPathComponent("CONTENT")
+            try rawPDF(rotate:90).write(to:source)
+            _ = try SoftwareManual.build(source:source,directory:dir)
+            let page=try Data(contentsOf:dir.appendingPathComponent("001.dxt"))
+            XCTAssertEqual(pixel(page,260,384),[0,0,255])
+            XCTAssertEqual(pixel(page,700,384),[255,0,0])
+        }
+    }
+    func testOversizedPDFAndAnimatedImageAndSymlinkAreRejected() throws {
+        try temporary { root in
+            // 101 pages fails fast at validation; nothing is staged.
+            let source=root.appendingPathComponent("manual.pdf"),dir=root.appendingPathComponent("CONTENT")
+            var box=CGRect(x:0,y:0,width:960,height:768)
+            let context=try XCTUnwrap(CGContext(source as CFURL,mediaBox:&box,nil))
+            for _ in 0..<101 { context.beginPDFPage(nil);context.endPDFPage() }
+            context.closePDF()
+            do {
+                try SoftwareManual.build(source:source,directory:dir)
+                XCTFail("a 101-page PDF must be rejected")
+            } catch {
+                XCTAssertTrue(error.localizedDescription.contains("1–100"),error.localizedDescription)
+            }
+            XCTAssertFalse(FileManager.default.fileExists(atPath:dir.path))
+            // A two-frame image must not silently contribute its first frame.
+            let animated=root.appendingPathComponent("animated.gif"),animatedDir=root.appendingPathComponent("ANIMATED")
+            let frame=try XCTUnwrap(CGContext(data:nil,width:16,height:16,bitsPerComponent:8,bytesPerRow:64,
+                space:CGColorSpace(name:CGColorSpace.sRGB)!,bitmapInfo:CGImageAlphaInfo.premultipliedLast.rawValue))
+            frame.setFillColor(CGColor(colorSpace:CGColorSpace(name:CGColorSpace.sRGB)!,components:[0,1,0,1])!)
+            frame.fill(CGRect(x:0,y:0,width:16,height:16))
+            let output=try XCTUnwrap(CGImageDestinationCreateWithURL(animated as CFURL,"com.compuserve.gif" as CFString,2,nil))
+            CGImageDestinationAddImage(output,try XCTUnwrap(frame.makeImage()),nil)
+            CGImageDestinationAddImage(output,try XCTUnwrap(frame.makeImage()),nil)
+            XCTAssertTrue(CGImageDestinationFinalize(output))
+            do {
+                try SoftwareManual.build(source:animated,directory:animatedDir)
+                XCTFail("a multi-frame image must be rejected")
+            } catch {
+                XCTAssertTrue(error.localizedDescription.contains("single PNG/JPEG"),error.localizedDescription)
+            }
+            XCTAssertFalse(FileManager.default.fileExists(atPath:animatedDir.path))
+            // A symlinked source is never followed for manual input.
+            try pdf(root.appendingPathComponent("real.pdf"))
+            let link=root.appendingPathComponent("link.pdf")
+            try FileManager.default.createSymbolicLink(at:link,withDestinationURL:root.appendingPathComponent("real.pdf"))
+            XCTAssertThrowsError(try SoftwareManual.build(source:link,directory:root.appendingPathComponent("LINK")))
+            XCTAssertFalse(FileManager.default.fileExists(atPath:root.appendingPathComponent("LINK").path))
+        }
+    }
 }

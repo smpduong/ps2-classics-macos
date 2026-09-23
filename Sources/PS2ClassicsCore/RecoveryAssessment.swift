@@ -271,7 +271,7 @@ public struct BuildAttemptIdentity: Codable, Equatable, Sendable {
             return "the completion record's support-file hashes do not match this attempt"
         }
         guard record.assetHashes == assetHashes else {
-            return "the completion record's artwork or sound hashes do not match this attempt"
+            return "the completion record's artwork, sound or manual hashes do not match this attempt"
         }
         return nil
     }
