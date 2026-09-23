@@ -1,3 +1,10 @@
+# Version 1.0 — release candidate 11 (RC11, build 20)
+
+- Verified save import into new card files. Only `.ps2save` folders this app exported are accepted, and only into a new destination: the source card is copied first and never opened for writing. Allocation is strict first-fit over truly free clusters, subdirectory links match the reference layout, and every written page gets fresh ECC with a zero tail. Publication requires a full re-parse (new save byte-exact, all other saves unchanged), a surgical page diff, and a helper round trip; anything less publishes nothing. ECC is proven bit-exact against 128 independent vectors, and an independent card manager's filesystem check passes on import results. Console acceptance of imported cards remains open.
+- CONFIG provenance research concluding the leading community corpus is Sony-derived or unlicensed; no default feed selected, nothing bundled.
+
+Still a release candidate: PS3 install/launch/save/disc/audio/manual/FTP acceptance, client Intel Monterey and M4 runtime, physical USB behavior and Developer ID signing/notarization remain open. Protected card formats, real-card geometry coverage, deeper/older/multi-track CHD, stream resume and curated CONFIG feeds stay deferred.
+
 # Version 1.0 — release candidate 10 (RC10, build 19)
 
 - Parent-dependent (delta) CHD import. A CHD that stores differences against a parent declares the exact parent identity it needs; choosing that file verifies the pair immediately in package discs and image tools. The helper resolves parent-backed hunks through the reference decoder with identity, depth (single-level), same-file and mid-run change checks, and the raw-SHA-1 check covers the resolved bytes. Parent paths and byte hashes travel through saved projects, queue snapshots, build fingerprints, the verified stage cache and recovery records, so a swapped parent invalidates exactly like a swapped source. Proven byte-exact against the reference chdman, including a parent-CHD package.

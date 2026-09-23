@@ -5,10 +5,10 @@ remains **open** for a final 1.0. It is deliberately explicit: a passing local
 suite is not evidence of console or client-hardware behaviour, and this build is
 therefore labelled a **1.0 release candidate**.
 
-Artifact under evaluation: `dist/PS2 Classics for Mac 1.0 RC10.zip`
-(`CFBundleShortVersionString` 1.0.0, `CFBundleVersion` 19, Universal
+Artifact under evaluation: `dist/PS2 Classics for Mac 1.0 RC11.zip`
+(`CFBundleShortVersionString` 1.0.0, `CFBundleVersion` 20, Universal
 `arm64` + `x86_64`, minimum macOS 12.0). Exact hashes are recorded in
-`dist/release-manifest-1.0-RC10.json` and `docs/VALIDATION.md`. RC10 build 19, RC9 build 18, RC8 build 17, RC7 build 16, RC6 build 15, RC5 build 14, RC4 build 13, RC3 build 12,
+`dist/release-manifest-1.0-RC11.json` and `docs/VALIDATION.md`. RC10 build 19, RC9 build 18, RC8 build 17, RC7 build 16, RC6 build 15, RC5 build 14, RC4 build 13, RC3 build 12,
 RC2 build 11, RC1 build 10 and all earlier archives are preserved.
 
 ## Gate history
@@ -49,6 +49,8 @@ RC2 build 11, RC1 build 10 and all earlier archives are preserved.
 | Opt-in CONFIG catalog import | Implemented and tested locally (RC8); offline cache and receipts added (RC9) | Bounded schema/process tests and size/hash-verified local receipts; cached-copy review/download/forget tests; no default third-party feed claimed |
 | Individual-save browse/export | Implemented and tested locally (RC9) | Bounded parser, synthetic small/full-size/encrypted fixtures, damage/cancellation/export regressions; cards never modified; import refused. Real-card and console save acceptance remain open |
 | Single-level parent-CHD import | Implemented and tested locally (RC10) | Explicit parent selection with identity/depth/same-file checks through import, projects, queue, fingerprints, cache and recovery; reference byte-parity and parent-CHD package. Deeper chains, older/multi-track variants remain deferred |
+| Individual-save import | Implemented and tested locally (RC11) | Manifest-bound exports into new files only; copy-first, strict allocation, reference-layout links, fresh ECC, re-parse/diff/round-trip verification. Originals never modified; console acceptance and protected formats remain open |
+| Exact card ECC | Proven locally (RC11) | Bit-exact on 128 independent vectors plus erased/single-bit properties |
 | Genuine parent-CHD rejection | Proven locally (RC9) | Reference-built and synthetic parent/child pairs rejected precisely; parent expands byte-exact. Broader parent/older/multi-track support remains deferred |
 | Supported-scope limitations visible | Closed | README, USER_GUIDE, PROJECT_PLAN, RELEASE_NOTES, FEATURE_LEDGER, DEFERRED_WORK |
 
@@ -85,15 +87,15 @@ passes on this artifact, it may be promoted from release candidate to 1.0 with
 no code change; otherwise the artifact stays a candidate and the findings feed
 the next build.
 
-## Acceptance results template (RC10)
+## Acceptance results template (RC11)
 
 Copy this into a new record and fill it in on the actual hardware. Every row is
 performed on **this exact artifact**:
 
 ```
-Artifact: dist/PS2 Classics for Mac 1.0 RC10.zip
-SHA-256: copy archiveSHA256 from dist/release-manifest-1.0-RC10.json
-Version/build: 1.0.0 / 19
+Artifact: dist/PS2 Classics for Mac 1.0 RC11.zip
+SHA-256: copy archiveSHA256 from dist/release-manifest-1.0-RC11.json
+Version/build: 1.0.0 / 20
 
 [ ] PS3 install        result:            title/disc/CID used:
 [ ] PS3 launch         result:            observed:
@@ -109,7 +111,7 @@ Version/build: 1.0.0 / 19
 [ ] Developer ID signing               result:
 [ ] Notarization                       result:
 [x] Owner licence decision             LICENSE and LICENSING.md
-[x] Corresponding-source package       dist/source-baseline-1.0-RC10.tar.gz
+[x] Corresponding-source package       dist/source-baseline-1.0-RC11.tar.gz
 [ ] PS3 manual display/navigation      result:
 [ ] PS3 FTP transfer/install           server/folder/result:
 ```
@@ -117,4 +119,4 @@ Version/build: 1.0.0 / 19
 Signature integrity checked locally is **not** Developer ID/notarization
 acceptance; cross-compilation is **not** runtime acceptance.
 
-Record all client acceptance against the RC10 manifest hash; earlier candidate hashes do not identify this build.
+Record all client acceptance against the RC11 manifest hash; earlier candidate hashes do not identify this build.

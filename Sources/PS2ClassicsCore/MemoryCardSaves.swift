@@ -41,18 +41,18 @@ public enum MemoryCardSaves {
         public let files: [File]
         public struct File: Codable { public let name: String; public let bytes: Int; public let sha256: String }
     }
-    private static let maximumCardBytes = 70 * 1024 * 1024
-    private static let maximumClusters: UInt64 = 262144
-    private static let maximumDirEntries: UInt64 = 8192
-    private static let maximumSaves = 1024
-    private static let last: UInt32 = 0xFFFFFFFF
-    private static let used: UInt32 = 0x80000000
-    private static let directoryFlag: UInt16 = 0x20
-    private static let fileFlag: UInt16 = 0x10
-    private static let existsFlag: UInt16 = 0x8000
-    private static let magic = Data("Sony PS2 Memory Card Format ".utf8)
+    static let maximumCardBytes = 70 * 1024 * 1024
+    static let maximumClusters: UInt64 = 262144
+    static let maximumDirEntries: UInt64 = 8192
+    static let maximumSaves = 1024
+    static let last: UInt32 = 0xFFFFFFFF
+    static let used: UInt32 = 0x80000000
+    static let directoryFlag: UInt16 = 0x20
+    static let fileFlag: UInt16 = 0x10
+    static let existsFlag: UInt16 = 0x8000
+    static let magic = Data("Sony PS2 Memory Card Format ".utf8)
 
-    private struct Geometry {
+    struct Geometry {
         let pageLength: UInt64
         let pagesPerCluster: UInt64
         let clusters: UInt64
@@ -65,7 +65,7 @@ public enum MemoryCardSaves {
         var capacityBytes: UInt64 { fatCount * clusterBytes }
     }
 
-    private final class Reader {
+    final class Reader {
         let fd: Int32
         let size: UInt64
         let geometry: Geometry
@@ -137,15 +137,14 @@ public enum MemoryCardSaves {
             fatCache[absolute] = words
             return words
         }
-        func fatEntry(_ relative: UInt64, runner: ConversionRunner) throws -> UInt32 {
-            // Double-indirect indexing per the reference: each FAT cluster
-            // holds clusterBytes/4 entries; each indirect cluster names up to
-            // 256 FAT clusters; ifc_list names up to 32 indirect clusters.
+        /// Absolute FAT cluster and slot holding one relative FAT entry.
+        /// Shared by readers and the save importer so both address the same
+        /// words through the same validated index walk.
+        func fatEntryLocation(_ relative: UInt64) throws -> (fatCluster: UInt32, slot: Int) {
             let perFat = geometry.clusterBytes / 4
             guard perFat >= 1, relative < geometry.fatCount else {
                 throw ConversionFailure(message: "A file chain leaves the allocation area. The filesystem is damaged.")
             }
-            try runner.checkCancellation()
             let fatClusterIndex = relative / perFat
             let indirectIndex = fatClusterIndex / 256
             let indirectSlot = fatClusterIndex % 256
@@ -168,7 +167,35 @@ public enum MemoryCardSaves {
             guard relative % perFat < UInt64(entries.count) else {
                 throw ConversionFailure(message: "The card's FAT index is damaged or points outside the file.")
             }
-            return entries[Int(relative % perFat)]
+            return (fatCluster, Int(relative % perFat))
+        }
+        func fatEntry(_ relative: UInt64, runner: ConversionRunner) throws -> UInt32 {
+            try runner.checkCancellation()
+            let location = try fatEntryLocation(relative)
+            return try clusterWords(location.fatCluster)[location.slot]
+        }
+        /// Relative cluster chain walked with cycle and range checks, fully
+        /// validated to a clean terminator.
+        func chainClusters(first: UInt32, label: String, runner: ConversionRunner) throws -> [UInt64] {
+            var chain = [UInt64]()
+            var seen = Set<UInt64>()
+            var current = UInt64(first)
+            while true {
+                guard !seen.contains(current), current < geometry.fatCount,
+                      UInt64(chain.count) < geometry.fatCount else {
+                    throw ConversionFailure(message: "\(label) has a cyclic or out-of-range cluster chain. The filesystem is damaged.")
+                }
+                seen.insert(current)
+                chain.append(current)
+                try runner.checkCancellation()
+                let entry = try fatEntry(current, runner: runner)
+                if entry == MemoryCardSaves.last { break }
+                guard entry & MemoryCardSaves.used != 0 else {
+                    throw ConversionFailure(message: "\(label) links through a free cluster. The filesystem is damaged.")
+                }
+                current = UInt64(entry & 0x7FFFFFFF)
+            }
+            return chain
         }
         /// Exactly `needed` bytes from a cluster chain, walked with cycle and
         /// range checks. The whole chain is validated to a clean terminator
@@ -181,38 +208,41 @@ public enum MemoryCardSaves {
                 throw ConversionFailure(message: "\(label) claims more bytes than the card can hold. The filesystem is damaged.")
             }
             var result = Data()
-            var seen = Set<UInt64>()
-            var current = UInt64(first)
-            var steps: UInt64 = 0
-            while true {
-                guard !seen.contains(current), current < geometry.fatCount, steps < geometry.fatCount else {
-                    throw ConversionFailure(message: "\(label) has a cyclic or out-of-range cluster chain. The filesystem is damaged.")
-                }
-                seen.insert(current); steps += 1
-                try runner.checkCancellation()
-                let data = try clusterData(geometry.allocOffset + current)
-                if UInt64(result.count) < needed {
-                    result.append(contentsOf: data.prefix(Int(needed - UInt64(result.count))))
-                }
-                let entry = try fatEntry(current, runner: runner)
-                if entry == MemoryCardSaves.last { break }
-                guard entry & MemoryCardSaves.used != 0 else {
-                    throw ConversionFailure(message: "\(label) links through a free cluster. The filesystem is damaged.")
-                }
-                current = UInt64(entry & 0x7FFFFFFF)
+            for relative in try chainClusters(first: first, label: label, runner: runner) {
+                if UInt64(result.count) >= needed { break }
+                let data = try clusterData(geometry.allocOffset + relative)
+                result.append(contentsOf: data.prefix(Int(needed - UInt64(result.count))))
             }
             guard UInt64(result.count) >= needed else {
                 throw ConversionFailure(message: "\(label) ends before its declared bytes. The filesystem is damaged.")
             }
             return result
         }
+        /// Every relative FAT entry value, for allocation scans. The table is
+        /// bounded by the card geometry (at most ~1 MiB for the largest cards).
+        func allFATEntries(runner: ConversionRunner) throws -> [UInt32] {
+            var entries = [UInt32]()
+            entries.reserveCapacity(Int(geometry.fatCount))
+            for relative in 0..<geometry.fatCount {
+                if relative % 4096 == 0 { try runner.checkCancellation() }
+                entries.append(try fatEntry(relative, runner: runner))
+            }
+            return entries
+        }
     }
 
-    private struct Dirent {
+    struct Dirent {
         let mode: UInt16; let length: UInt32; let cluster: UInt32; let name: String
     }
 
-    private static func parseDirent(_ data: Data, index: Int) throws -> Dirent {
+    /// Names usable as directory entries: nonempty printable ASCII without
+    /// the documented illegal characters. Shared by the parser and importer.
+    static func validEntryName(_ name: String) -> Bool {
+        guard !name.isEmpty, name.utf8.count < 32 else { return false }
+        return name.utf8.allSatisfy({ $0 >= 0x20 && $0 <= 0x7E && $0 != 0x2F && $0 != 0x3F && $0 != 0x2A })
+    }
+
+    static func parseDirent(_ data: Data, index: Int) throws -> Dirent {
         guard data.count == 512 else {
             throw ConversionFailure(message: "A directory record is truncated. The filesystem is damaged.")
         }
@@ -224,18 +254,18 @@ public enum MemoryCardSaves {
             throw ConversionFailure(message: "Directory entry \(index + 1) has no terminated name. The filesystem is damaged.")
         }
         let nameData = rawName[..<nul]
-        guard !nameData.isEmpty, nameData.allSatisfy({ $0 >= 0x20 && $0 <= 0x7E && $0 != 0x2F && $0 != 0x3F && $0 != 0x2A }) else {
+        guard validEntryName(String(decoding: nameData, as: UTF8.self)) else {
             throw ConversionFailure(message: "Directory entry \(index + 1) has an unusable name. The filesystem is damaged.")
         }
         return Dirent(mode: mode, length: length, cluster: cluster, name: String(decoding: nameData, as: UTF8.self))
     }
 
-    private static func rootEntryCount(_ reader: Reader, runner: ConversionRunner) throws -> UInt32 {
+    static func rootEntryCount(_ reader: Reader, runner: ConversionRunner) throws -> UInt32 {
         let head = try reader.chainData(first: 0, needed: 512, label: "Root directory", runner: runner)
         return try parseDirent(head, index: 0).length
     }
 
-    private static func listDirectory(_ reader: Reader, first: UInt32, count: UInt32, label: String, runner: ConversionRunner) throws -> [Dirent] {
+    static func listDirectory(_ reader: Reader, first: UInt32, count: UInt32, label: String, runner: ConversionRunner) throws -> [Dirent] {
         guard count >= 2, UInt64(count) <= maximumDirEntries else {
             throw ConversionFailure(message: "\(label) declares \(count) entries, which is outside the supported range. The filesystem is damaged.")
         }
@@ -256,7 +286,7 @@ public enum MemoryCardSaves {
         return entries
     }
 
-    private static func readGeometry(fd: Int32, size: UInt64) throws -> Geometry {
+    static func readGeometry(fd: Int32, size: UInt64) throws -> Geometry {
         var probe = [UInt8](repeating: 0, count: 1040)
         guard pread(fd, &probe, probe.count, 0) == probe.count else {
             throw ConversionFailure(message: "The card is too small to hold a filesystem superblock.")
@@ -305,7 +335,7 @@ public enum MemoryCardSaves {
                         clusterBytes: pageLength * ppc, ifc: ifc)
     }
 
-    private static func scan(fd: Int32, size: UInt64, runner: ConversionRunner,
+    static func scan(fd: Int32, size: UInt64, runner: ConversionRunner,
                              progress: @escaping @Sendable (ConversionProgress) -> Void) throws -> [Save] {
         let geometry = try readGeometry(fd: fd, size: size)
         let reader = Reader(fd: fd, size: size, geometry: geometry)
@@ -359,7 +389,7 @@ public enum MemoryCardSaves {
         return saves
     }
 
-    private static func openCard(_ url: URL) throws -> (Int32, UInt64) {
+    static func openCard(_ url: URL) throws -> (Int32, UInt64) {
         guard url.isFileURL else { throw ConversionFailure(message: "Choose a local memory-card file.") }
         let fd = open(url.path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
         guard fd >= 0 else { throw ConversionFailure(message: "Cannot read the card, or it is a symbolic link.") }
@@ -372,7 +402,7 @@ public enum MemoryCardSaves {
         return (fd, UInt64(status.st_size))
     }
 
-    private static func readPrefix(_ url: URL, count: Int) throws -> Data {
+    static func readPrefix(_ url: URL, count: Int) throws -> Data {
         let (fd, _) = try openCard(url)
         defer { close(fd) }
         var buffer = [UInt8](repeating: 0, count: count)

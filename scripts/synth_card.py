@@ -47,14 +47,15 @@ class Card:
         return bytes(self.raw)
 
 
-def dirent(mode, length, cluster, name, first=False):
+def dirent(mode, length, cluster, name, dir_entry=0):
+    # A subdirectory's "." entry links (parent first cluster, own index in
+    # the parent); ".." and the root's own "." keep zeros here.
     assert len(name.encode('ascii')) < 32
     entry = bytearray(512)
     struct.pack_into('<H', entry, 0, mode)
     struct.pack_into('<I', entry, 4, length)
     struct.pack_into('<I', entry, 0x10, cluster)
-    if first:
-        struct.pack_into('<I', entry, 0x14, 0)
+    struct.pack_into('<I', entry, 0x14, dir_entry)
     entry[0x40:0x40 + len(name)] = name.encode('ascii')
     return bytes(entry)
 
@@ -94,9 +95,11 @@ def build_standard(files: dict, second_save=True) -> bytes:
         files = dict(files)
         files['BESLES-54321EMPTY'] = {}
     dir_chains = {}
+    root_index = 2
     for name in save_names:
         contents = files[name]
-        entries = [dirent(DMODE, 0, 0, '.'), dirent(DMODE, 0, 0, '..')]
+        entries = [dirent(DMODE, 0, 0, '.', root_index), dirent(DMODE, 0, 0, '..')]
+        root_index += 1
         for fname, fdata in contents.items():
             need = max(1, (len(fdata) + card.cluster_bytes() - 1) // card.cluster_bytes())
             chain = take(need) if fdata else []

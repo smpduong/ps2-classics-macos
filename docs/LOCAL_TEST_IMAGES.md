@@ -85,6 +85,10 @@ All four originals passed descriptor, boot-ID and full SHA-256 checks and comple
 
 All four originals passed descriptor, boot-ID and full SHA-256 checks and completed packages through the release 1.0 RC4 tools (CD-sized 520,135,344 B / 21.31 s, DVD9 8,502,254,080 B / 337.8 s, two-disc 9,411,154,448 B / 373.31 s, SLUS20892 then SLUS21133 retained). Every original hash matched the known value and was unchanged before/after, and each build report carried the durable attempt fingerprint, fit/crop setting and support/asset hashes. Each package passed independent Python decoding **and** identity-bound native `verify-package`. Times are development-host measurements, not client promises. Temporary outputs were removed. This is still local workflow/integrity evidence, not console behavior. RC4 additionally adds an optional WAV->ATRAC3 encoder whose output was validated by independent decoding.
 
+## RC11 follow-up
+
+No disc-conversion code changed (Swift card tools and docs only), so no package rebuild was claimed. All four originals re-passed read-only descriptor, boot-ID and full SHA-256 checks with the current helper (`test-results/rom-inspection.json`, passed). This remains local workflow/integrity evidence, not console behavior.
+
 ## RC10 follow-up
 
 The `ps2-convert` helper changed (parent-aware CHD open/inspect/extract plus precise format reports), so the full read-only package suite ran again: CD-sized 520,135,344 bytes / 19.67 s, DVD9 8,502,254,080 bytes / 329.33 s, two-disc 9,411,154,448 bytes / 377.01 s (SLUS20892 then SLUS21133 retained). Every original hash matched the known value and was unchanged before/after, and each package passed independent Python decoding and identity-bound native verification. Results: `test-results/v19-real-packages.json` (git-ignored). This remains local workflow/integrity evidence, not console behavior.

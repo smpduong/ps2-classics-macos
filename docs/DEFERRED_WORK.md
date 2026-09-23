@@ -23,11 +23,18 @@ redistribution of its CONFIG data, with a stable revision or checksum mechanism
   repository"; its NET/GX/SOFT categories derive from Sony's emulator and
   official releases.
 
-**Unresolved prerequisite:** file-level redistribution provenance has not been
-established for a selected CONFIG source in this project. This is an open
-research/approval question, not proof that no usable source exists. A pinned
-repository commit with recorded content digests can supply version identity;
-a dedicated checksum endpoint is not intrinsically required. RC8 adds a generic user-supplied HTTPS catalog importer; it does not select an upstream or bundle newly approved CONFIG data. RC9 adds an offline last-known-good cache of reviewed catalogs and records the catalog source/revision/license in every download receipt; refresh stays explicit and project selections still never change silently.
+**RC11 provenance research (negative result, prerequisite stands):** the most
+cited community source disqualifies itself. ManaGunZ's changelog states its
+NET CONFIGs come from official PS2 classic packages, GX from the gxemu
+emulator and SOFT from softemu (all Sony-derived), CUSTOM is unofficial with
+no stated rights, and v1.49 removed the bundled set ("I can't keep it up to
+date"), pointing at webMAN-MOD — whose PS2CONFIG package is the same
+Sony-derived lineage via Aldostools. No candidate offers file-level
+redistribution rights, so no default feed is selected and nothing new is
+bundled. This is a negative result about the examined candidates, not proof
+that no usable source exists; a pinned source with recorded digests and a
+clear rights grant would still satisfy the prerequisite. The generic importer, offline cache and receipts remain the
+available path for user-supplied catalogs with proven provenance.
 
 **Curated-feed acceptance design (generic importing is implemented in RC8):**
 - User-initiated, opt-in download only; never automatic and never a background
@@ -134,25 +141,29 @@ independently produced fixtures. Multi-track formats additionally need a proven 
 
 For mid-stream resume, introduce an owned partial-stage journal tied to source/key/content/profile hashes, persist only complete authenticated groups after syncing them, verify the retained prefix before resuming, and test forced termination at every journal/data publication boundary. Integrate partial-stage retention with writer locks, cache limits, cancellation and recovery. This is unfinished engineering work; completed-stage reuse must not be relabelled as stream resume.
 
-## 6. Individual-save import (browse/export implemented in RC9)
+## 6. Individual-save import — implemented locally in RC11
 
-RC9 adds a bounded read-only card filesystem parser (`MemoryCardSaves`):
+RC9 added a bounded read-only card filesystem parser (`MemoryCardSaves`):
 superblock geometry, double-indirect FAT and 512-byte directory entries per
 Ross Ridge's public-domain filesystem description (corroborated by the PS2
 developer wiki), with cycle/range/length/name cross-checks, exact-size
 validation, and precise rejection of the `+16 KiB` extended form. Save listing
 and verified export (exclusive `<name>.ps2save` folders with hash manifests,
 card opened read-only, source re-hashed before/after) are proven on synthetic
-8 MiB and small-geometry fixtures plus an encrypted-card round trip; real-card
-and 16/32/64 MiB geometry coverage is still synthetic-only and PS3
-save-acceptance remains external.
+8 MiB and small-geometry fixtures plus an encrypted-card round trip.
 
-Import (writing saves back) stays deferred. Prerequisites: FAT allocation and
-directory-entry creation that cannot strand chains on failure; ECC spare-byte
-handling pinned down (the helper encrypts spare bytes opaquely and never
-recomputes them, so an importer must define where valid ECC comes from);
-allocation-buddy testing with kill cases at every write boundary; and proof on
-expendable synthetic cards that a failed import leaves the original card
-restorable from its verified backup. Until then, imports are refused rather
-than approximated, and the whole-card backup remains the safe path for
-damaged or protected cards.
+RC11 adds verified import of those exports into a NEW card file
+(`MemoryCardImport`): manifest-bound payloads only (no arbitrary files, no
+merges, existing names never replaced), copy-first workspace discipline,
+strict first-fit allocation over truly free clusters, subdirectory link
+entries matching the reference layout, current-time JST timestamps,
+conventional modes, fresh ECC with zero tails on every written page,
+re-parse with the new save byte-exact and all other saves digest-identical,
+a surgical page diff, and a helper round trip — all fail-closed with no
+published output. ECC bit-exactness is proven against an independent
+implementation's 128 vectors plus erased/single-bit properties
+(`MemoryCardECCTests`); an independent card manager's filesystem check
+passes on import results. Real-card coverage (any size), 16/32/64 MiB
+geometry fixtures, protected per-console formats, and actual console
+acceptance of imported cards remain open; the original card is never
+modified, so a failed experiment always leaves the source intact.

@@ -1,0 +1,536 @@
+// SPDX-License-Identifier: GPL-3.0-only
+import Foundation
+import Darwin
+
+/// Verified save import into a NEW card file. The source card is only ever
+/// opened read-only; every change lands on a private copy that is fully
+/// verified before exclusive publication, and the original is never modified.
+///
+/// Import source: only `.ps2save` folders this app exported (manifest
+/// version 1 with per-file hashes). Anything else is refused precisely;
+/// there is no arbitrary-file or merge import, and an existing save name is
+/// never replaced.
+///
+/// What is verified before publication: the export manifest match, name
+/// rules, name collisions, free-space sufficiency, per-page ECC of every
+/// written page, a full re-parse (the new save byte-exact, every other save
+/// digest-identical), a surgical byte diff (only intended pages differ), and
+/// a helper round trip. What stays open: whether a console accepts the
+/// imported card — like every other feature here, that needs hardware
+/// acceptance. ECC bytes are generated per the documented Hamming algorithm
+/// with a zero tail (the reference community convention, proven bit-exact in
+/// `MemoryCardECCTests`); spare bytes of untouched pages pass through
+/// opaquely, and untouched pages keep their bytes exactly.
+public enum MemoryCardImport {
+    public struct ImportedFile: Sendable, Equatable {
+        public let name: String
+        public let bytes: Int
+        public let sha256: String
+    }
+    public struct Result: Sendable, Equatable {
+        public let save: String
+        public let files: [ImportedFile]
+        public let totalBytes: Int
+        public let cardSHA256: String
+    }
+    static let maxFiles = 256
+    static let maxFileBytes = 16 * 1024 * 1024
+    static let maxTotalBytes = 64 * 1024 * 1024
+    static let dirMode: UInt16 = 0x8427
+    static let fileMode: UInt16 = 0x8417
+
+    private struct ExportFile {
+        let name: String
+        let bytes: Data
+    }
+
+    /// Japan-timezone timestamp in the card's 8-byte layout (pad, sec, min,
+    /// hour, day, month, little-endian year), matching the reference format.
+    static func timestamp(at date: Date = Date()) -> Data {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 9 * 3600) ?? .current
+        let parts = calendar.dateComponents([.second, .minute, .hour, .day, .month, .year], from: date)
+        var out = Data(count: 8)
+        out[1] = UInt8(parts.second ?? 0); out[2] = UInt8(parts.minute ?? 0)
+        out[3] = UInt8(parts.hour ?? 0); out[4] = UInt8(parts.day ?? 1)
+        out[5] = UInt8(parts.month ?? 1)
+        let year = UInt16(parts.year ?? 2000)
+        out[6] = UInt8(year & 255); out[7] = UInt8(year >> 8)
+        return out
+    }
+
+    private static func checkedWrite(fd: Int32, offset: UInt64, data: Data,
+                                     writtenPages: inout Set<UInt64>, stride: UInt64) throws {
+        var remaining = data.count
+        var position = offset
+        try data.withUnsafeBytes { body in
+            guard var base = body.baseAddress, !data.isEmpty else { return }
+            while remaining > 0 {
+                if lseek(fd, off_t(position), SEEK_SET) < 0 {
+                    throw ConversionFailure(message: "The import workspace could not be written.")
+                }
+                let n = write(fd, base, remaining)
+                if n < 0, errno == EINTR { continue }
+                guard n > 0 else { throw ConversionFailure(message: "The import workspace could not be written.") }
+                base += n; remaining -= n; position += UInt64(n)
+            }
+        }
+        if !data.isEmpty {
+            for page in (offset / stride)...((offset + UInt64(data.count) - 1) / stride) {
+                writtenPages.insert(page)
+            }
+        }
+    }
+
+    /// Writes one full data page with freshly calculated ECC and a zero tail,
+    /// and records the page for the surgical diff.
+    private static func writeDataPage(fd: Int32, geometry: MemoryCardSaves.Geometry, page: UInt64,
+                                      data: Data, writtenPages: inout Set<UInt64>) throws {
+        let data = Data(data)
+        guard data.count == Int(geometry.pageLength) else {
+            throw ConversionFailure(message: "Internal import error: short page write.")
+        }
+        let stride = geometry.pageStride
+        try checkedWrite(fd: fd, offset: page * stride, data: data, writtenPages: &writtenPages, stride: stride)
+        var spare = MemoryCardECC.calculatePage(data)
+        spare.append(Data(count: 16 - spare.count))
+        try checkedWrite(fd: fd, offset: page * stride + UInt64(geometry.pageLength),
+                         data: spare, writtenPages: &writtenPages, stride: stride)
+    }
+
+    /// Writes one allocatable cluster (relative index) with fresh ECC.
+    /// The buffer is copied to zero-based indexing first: callers pass
+    /// slices, and integer subscripts address the entry, not the source.
+    private static func writeRelativeCluster(fd: Int32, geometry: MemoryCardSaves.Geometry, relative: UInt64,
+                                             data: Data, writtenPages: inout Set<UInt64>) throws {
+        let data = Data(data)
+        guard data.count == Int(geometry.clusterBytes) else {
+            throw ConversionFailure(message: "Internal import error: short cluster write.")
+        }
+        for i in 0..<geometry.pagesPerCluster {
+            let start = Int(i * geometry.pageLength)
+            try writeDataPage(fd: fd, geometry: geometry,
+                              page: (geometry.allocOffset + relative) * geometry.pagesPerCluster + i,
+                              data: data[start..<start + Int(geometry.pageLength)],
+                              writtenPages: &writtenPages)
+        }
+    }
+
+    /// Writes one cluster by absolute cluster number (for FAT clusters).
+    /// Copies to zero-based indexing first, like writeRelativeCluster.
+    private static func writeAbsoluteCluster(fd: Int32, geometry: MemoryCardSaves.Geometry, absolute: UInt64,
+                                             data: Data, writtenPages: inout Set<UInt64>) throws {
+        let data = Data(data)
+        guard data.count == Int(geometry.clusterBytes) else {
+            throw ConversionFailure(message: "Internal import error: short cluster write.")
+        }
+        for i in 0..<geometry.pagesPerCluster {
+            let start = Int(i * geometry.pageLength)
+            try writeDataPage(fd: fd, geometry: geometry, page: absolute * geometry.pagesPerCluster + i,
+                              data: data[start..<start + Int(geometry.pageLength)],
+                              writtenPages: &writtenPages)
+        }
+    }
+
+    private static func direntBytes(mode: UInt16, length: UInt32, cluster: UInt32, dirEntry: UInt32,
+                                    now: Data, name: String) -> Data {
+        var entry = Data(count: 512)
+        entry[0] = UInt8(mode & 255); entry[1] = UInt8(mode >> 8)
+        for (offset, value) in [(4, length), (0x10, cluster), (0x14, dirEntry)] {
+            entry[offset] = UInt8(value & 255); entry[offset + 1] = UInt8((value >> 8) & 255)
+            entry[offset + 2] = UInt8((value >> 16) & 255); entry[offset + 3] = UInt8((value >> 24) & 255)
+        }
+        entry.replaceSubrange(0x08..<0x10, with: now)
+        entry.replaceSubrange(0x18..<0x20, with: now)
+        let nameBytes = Data(name.utf8)
+        entry.replaceSubrange(0x40..<0x40 + nameBytes.count, with: nameBytes)
+        return entry
+    }
+
+    @discardableResult
+    public static func importSave(_ saveDir: URL, card: URL, destination: URL, helper: URL,
+                                  runner: ConversionRunner,
+                                  progress: @escaping @Sendable (ConversionProgress) -> Void = { _ in }) throws -> Result {
+        typealias S = MemoryCardSaves
+        // 1. The export package: only our own verified exports are accepted.
+        guard saveDir.isFileURL, saveDir.pathExtension == "ps2save" else {
+            throw ConversionFailure(message: "Choose a .ps2save folder previously exported by this app. Other folders are not accepted.")
+        }
+        let manifestDecoder = JSONDecoder()
+        manifestDecoder.dateDecodingStrategy = .iso8601
+        guard let manifestBytes = try? BoundedFile.read(saveDir.appendingPathComponent("manifest.json"), maximum: 65536),
+              let manifest = try? manifestDecoder.decode(S.ExportManifest.self, from: manifestBytes) else {
+            throw ConversionFailure(message: "The export folder has no readable manifest. Only verified .ps2save exports can be imported.")
+        }
+        guard manifest.version == 1, S.validEntryName(manifest.save) else {
+            throw ConversionFailure(message: "The export manifest is unsupported or names an unusable save.")
+        }
+        guard manifest.files.count <= maxFiles else {
+            throw ConversionFailure(message: "The export manifest lists an unsupported number of files.")
+        }
+        var seenNames = Set<String>(), total = 0
+        var payloads = [ExportFile]()
+        for file in manifest.files {
+            guard S.validEntryName(file.name), !seenNames.contains(file.name) else {
+                throw ConversionFailure(message: "The export manifest names an unusable or duplicated file.")
+            }
+            seenNames.insert(file.name)
+            guard file.bytes >= 0, file.bytes <= maxFileBytes,
+                  file.sha256.range(of: "^[0-9a-f]{64}$", options: .regularExpression) != nil else {
+                throw ConversionFailure(message: "The export manifest entry for “\(file.name)” is unsupported or damaged.")
+            }
+            total += file.bytes
+            guard total <= maxTotalBytes else {
+                throw ConversionFailure(message: "The exported save is larger than the supported import limit.")
+            }
+            let url = saveDir.appendingPathComponent(file.name)
+            let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
+            guard values?.isRegularFile == true, let size = values?.fileSize, size == file.bytes else {
+                throw ConversionFailure(message: "Exported file “\(file.name)” is missing or does not match its manifest.")
+            }
+            let bytes: Data = size == 0 ? Data() : try FileDigest.small(url, maximum: maxFileBytes)
+            guard FileDigest.sha256(data: bytes) == file.sha256 else {
+                throw ConversionFailure(message: "Exported file “\(file.name)” does not match its recorded checksum. Nothing was imported.")
+            }
+            payloads.append(ExportFile(name: file.name, bytes: bytes))
+        }
+        // 2. Destination and private workspace. The source card is never opened
+        // for writing; all changes land on a staged copy.
+        guard destination.isFileURL else { throw ConversionFailure(message: "Choose a local destination file.") }
+        guard !FileManager.default.fileExists(atPath: destination.path) else {
+            throw ConversionFailure(message: "The destination already exists. Existing cards are never replaced.")
+        }
+        try DestinationCheck.probeWritable(folder: destination.deletingLastPathComponent())
+        let workspace = FileManager.default.temporaryDirectory.appendingPathComponent(".ps2-save-import-" + UUID().uuidString)
+        guard mkdir(workspace.path, 0o700) == 0 else {
+            throw ConversionFailure(message: "Cannot create a private import workspace.")
+        }
+        var complete = false
+        defer { if !complete { try? FileManager.default.removeItem(at: workspace) } }
+        try runner.checkCancellation()
+        progress(ConversionProgress(stage: "Copying card", fraction: 0.05))
+        let raw = workspace.appendingPathComponent("card.work")
+        let encrypted: Bool
+        if try S.readPrefix(card, count: 28) == S.magic {
+            guard card.pathExtension.lowercased() == "vmc",
+                  destination.pathExtension.lowercased() == "vmc" else {
+                throw ConversionFailure(message: "An unencrypted card imports into a new .VMC file. Choose a matching destination name.")
+            }
+            try FileManager.default.copyItem(at: card, to: raw)
+            encrypted = false
+        } else {
+            guard card.pathExtension.lowercased() == "vme",
+                  destination.pathExtension.lowercased() == "vme" else {
+                throw ConversionFailure(message: "An encrypted card imports into a new .VME file. Choose a matching destination name.")
+            }
+            try runner.run(arguments: ["vmc-decrypt", card.path, raw.path], helper: helper, progress: progress)
+            encrypted = true
+        }
+        try runner.checkCancellation()
+        let fd = open(raw.path, O_RDWR | O_NOFOLLOW | O_CLOEXEC)
+        guard fd >= 0 else { throw ConversionFailure(message: "Cannot stage the card copy.") }
+        defer { close(fd) }
+        var status = stat()
+        guard fstat(fd, &status) == 0, status.st_size > 0 else {
+            throw ConversionFailure(message: "Cannot stage the card copy.")
+        }
+        let size = UInt64(status.st_size)
+        // 3. Baseline inventory of the copy (identical bytes to the source).
+        let geometry = try S.readGeometry(fd: fd, size: size)
+        let reader = S.Reader(fd: fd, size: size, geometry: geometry)
+        let baseline = try S.scan(fd: fd, size: size, runner: runner, progress: progress)
+        guard !baseline.contains(where: { $0.name == manifest.save }) else {
+            throw ConversionFailure(message: "Save “\(manifest.save)” already exists on this card. Imports never replace saves.")
+        }
+        progress(ConversionProgress(stage: "Allocating save space", fraction: 0.4))
+        // 4. Root slot: reuse a deleted entry when one exists, else append.
+        let perCluster = geometry.clusterBytes / 512
+        guard geometry.clusterBytes % 512 == 0, perCluster >= 1 else {
+            throw ConversionFailure(message: "The card geometry cannot hold directory entries. The filesystem is damaged.")
+        }
+        let rootCount = try S.rootEntryCount(reader, runner: runner)
+        let rootChain = try reader.chainClusters(first: 0, label: "Root directory", runner: runner)
+        var rootEntries = [S.Dirent]()
+        for cluster in rootChain {
+            let blob = try reader.clusterData(geometry.allocOffset + cluster)
+            for i in 0..<Int(perCluster) {
+                if rootEntries.count >= Int(rootCount) { break }
+                rootEntries.append(try S.parseDirent(Data(blob[i * 512..<(i + 1) * 512]), index: rootEntries.count))
+            }
+        }
+        guard rootEntries.count == Int(rootCount),
+              rootEntries[0].name == ".", rootEntries[1].name == ".." else {
+            throw ConversionFailure(message: "The root directory does not start with its link entries. The filesystem is damaged.")
+        }
+        let slot: Int
+        let newRootCount: UInt32
+        if let reused = rootEntries[2...].firstIndex(where: { $0.mode & S.existsFlag == 0 }) {
+            slot = reused
+            newRootCount = rootCount
+        } else {
+            slot = rootEntries.count
+            newRootCount = rootCount + 1
+            guard UInt64(newRootCount) <= S.maximumDirEntries else {
+                throw ConversionFailure(message: "The root directory is at its supported limit.")
+            }
+        }
+        let rootCapacity = UInt64(rootChain.count) * perCluster
+        let rootExtend = UInt64(newRootCount) > rootCapacity
+        if rootExtend {
+            guard UInt64(newRootCount) <= rootCapacity + perCluster else {
+                throw ConversionFailure(message: "The root directory cannot grow by one cluster. The filesystem is damaged.")
+            }
+        }
+        // 5. Allocate: file data, the save directory, and possibly one root
+        // cluster. Strict first-fit ascending over truly free (zero) entries.
+        // Empty files take no clusters and keep the LAST marker.
+        let fileNeeds = payloads.map { $0.bytes.isEmpty ? 0 : max(1, ($0.bytes.count + Int(geometry.clusterBytes) - 1) / Int(geometry.clusterBytes)) }
+        let dirNeed = max(1, (2 + payloads.count + Int(perCluster) - 1) / Int(perCluster))
+        let needTotal = fileNeeds.reduce(0, +) + dirNeed + (rootExtend ? 1 : 0)
+        let fat = try reader.allFATEntries(runner: runner)
+        for (i, value) in fat.enumerated() where value != 0 && value & S.used == 0 {
+            throw ConversionFailure(message: "FAT entry \(i) is marked free but holds data. The filesystem is damaged; use whole-card backup.")
+        }
+        var free = fat.indices.filter { fat[$0] == 0 }
+        guard free.count >= needTotal else {
+            throw ConversionFailure(message: "The card has \(free.count) free clusters but this save needs \(needTotal). Free space first.")
+        }
+        var taken = [UInt64]()
+        for _ in 0..<needTotal { taken.append(UInt64(free.removeFirst())) }
+        var fileChains = [[UInt64]](), cursor = 0
+        for need in fileNeeds {
+            if need == 0 {
+                fileChains.append([])
+            } else {
+                fileChains.append(Array(taken[cursor..<cursor + need])); cursor += need
+            }
+        }
+        let dirChain = Array(taken[cursor..<cursor + dirNeed]); cursor += dirNeed
+        let rootExtra: [UInt64] = rootExtend ? [taken[cursor]] : []
+        try runner.checkCancellation()
+        progress(ConversionProgress(stage: "Writing save files", fraction: 0.55))
+        // 6. Writes. Every touched page gets fresh ECC plus a zero tail and
+        // is recorded for the surgical diff.
+        var writtenPages = Set<UInt64>()
+        for (payload, chain) in zip(payloads, fileChains) {
+            var blob = payload.bytes
+            blob.append(Data(count: chain.count * Int(geometry.clusterBytes) - blob.count))
+            for (rel, i) in zip(chain, 0..<chain.count) {
+                let start = i * Int(geometry.clusterBytes)
+                try writeRelativeCluster(fd: fd, geometry: geometry, relative: rel,
+                                         data: blob[start..<start + Int(geometry.clusterBytes)],
+                                         writtenPages: &writtenPages)
+            }
+        }
+        let now = timestamp()
+        var dirBlob = Data()
+        // The "." entry links back to the parent: the root's first cluster
+        // (always relative 0, enforced at parse) and this save's index in
+        // it. This matches the reference layout; readers must not rely on it
+        // but writers must set it.
+        dirBlob.append(direntBytes(mode: dirMode, length: 0, cluster: 0, dirEntry: UInt32(slot),
+                                   now: now, name: "."))
+        dirBlob.append(direntBytes(mode: dirMode, length: 0, cluster: 0, dirEntry: 0, now: now, name: ".."))
+        for (payload, chain) in zip(payloads, fileChains) {
+            dirBlob.append(direntBytes(mode: fileMode, length: UInt32(payload.bytes.count),
+                                       cluster: chain.first.map(UInt32.init) ?? S.last,
+                                       dirEntry: 0, now: now, name: payload.name))
+        }
+        dirBlob.append(Data(count: dirChain.count * Int(geometry.clusterBytes) - dirBlob.count))
+        for (rel, i) in zip(dirChain, 0..<dirChain.count) {
+            let start = i * Int(geometry.clusterBytes)
+            try writeRelativeCluster(fd: fd, geometry: geometry, relative: rel,
+                                     data: dirBlob[start..<start + Int(geometry.clusterBytes)],
+                                     writtenPages: &writtenPages)
+        }
+        // FAT links for the new chains.
+        var fatValues = [UInt64: UInt32]()
+        func link(_ chain: [UInt64]) {
+            for (a, b) in zip(chain, chain.dropFirst()) { fatValues[a] = S.used | UInt32(b) }
+            if let last = chain.last { fatValues[last] = S.last }
+        }
+        fileChains.forEach(link)
+        link(dirChain)
+        var fullRootChain = rootChain
+        if let extra = rootExtra.first {
+            guard let previous = rootChain.last else {
+                throw ConversionFailure(message: "Internal import error: empty root chain.")
+            }
+            fatValues[previous] = S.used | UInt32(extra)
+            fatValues[extra] = S.last
+            fullRootChain.append(extra)
+        }
+        // Rewrite each touched FAT cluster once, preserving other entries.
+        var fatCurrent = [UInt32: [UInt32]]()
+        for (rel, _) in fatValues {
+            let location = try reader.fatEntryLocation(rel)
+            if fatCurrent[location.fatCluster] == nil {
+                fatCurrent[location.fatCluster] = try reader.clusterWords(location.fatCluster)
+            }
+        }
+        for (rel, value) in fatValues {
+            let location = try reader.fatEntryLocation(rel)
+            fatCurrent[location.fatCluster]![location.slot] = value
+        }
+        for (absolute, words) in fatCurrent {
+            var blob = Data()
+            for word in words {
+                blob.append(contentsOf: [UInt8(word & 255), UInt8((word >> 8) & 255),
+                                         UInt8((word >> 16) & 255), UInt8((word >> 24) & 255)])
+            }
+            try writeAbsoluteCluster(fd: fd, geometry: geometry, absolute: UInt64(absolute),
+                                     data: blob, writtenPages: &writtenPages)
+        }
+        // Root records: the save entry at its slot (zero-filling a brand-new
+        // extension cluster first so no stale bytes are published) and the
+        // entry count.
+        var rootBlobs = [UInt64: Data]()
+        for cluster in fullRootChain {
+            if rootExtend && cluster == fullRootChain.last {
+                rootBlobs[cluster] = Data(count: Int(geometry.clusterBytes))
+            } else {
+                rootBlobs[cluster] = try reader.clusterData(geometry.allocOffset + cluster)
+            }
+        }
+        func rootOffset(_ index: Int) -> (cluster: UInt64, at: Int) {
+            (fullRootChain[index / Int(perCluster)], (index % Int(perCluster)) * 512)
+        }
+        let (slotCluster, slotAt) = rootOffset(slot)
+        var slotBlob = rootBlobs[slotCluster]!
+        slotBlob.replaceSubrange(slotAt..<slotAt + 512, with: direntBytes(
+            mode: dirMode, length: UInt32(2 + payloads.count), cluster: UInt32(dirChain[0]),
+            dirEntry: 0, now: now, name: manifest.save))
+        rootBlobs[slotCluster] = slotBlob
+        let (zeroCluster, zeroAt) = rootOffset(0)
+        var zeroBlob = rootBlobs[zeroCluster]!
+        let v = newRootCount
+        zeroBlob[zeroAt + 4] = UInt8(v & 255); zeroBlob[zeroAt + 5] = UInt8((v >> 8) & 255)
+        zeroBlob[zeroAt + 6] = UInt8((v >> 16) & 255); zeroBlob[zeroAt + 7] = UInt8((v >> 24) & 255)
+        rootBlobs[zeroCluster] = zeroBlob
+        for cluster in fullRootChain {
+            let before = try reader.clusterData(geometry.allocOffset + cluster)
+            let blob = rootBlobs[cluster]!
+            if before != blob {
+                try writeRelativeCluster(fd: fd, geometry: geometry, relative: cluster,
+                                         data: blob, writtenPages: &writtenPages)
+            }
+        }
+        guard fsync(fd) == 0 else {
+            throw ConversionFailure(message: "The import workspace could not be flushed.")
+        }
+        try runner.checkCancellation()
+        progress(ConversionProgress(stage: "Verifying imported save", fraction: 0.75))
+        // 7. Verify: ECC on every written page, a full re-parse, a surgical
+        // diff, and a helper round trip. Any failure deletes the copy.
+        let pageStride = geometry.pageStride
+        for page in writtenPages {
+            try runner.checkCancellation()
+            guard lseek(fd, off_t(page * pageStride), SEEK_SET) >= 0 else {
+                throw ConversionFailure(message: "The imported copy could not be re-read. Nothing was published.")
+            }
+            var dataBytes = [UInt8](repeating: 0, count: Int(geometry.pageLength))
+            var spareBytes = [UInt8](repeating: 0, count: 16)
+            let gotData = dataBytes.withUnsafeMutableBytes { read(fd, $0.baseAddress!, $0.count) }
+            let gotSpare = spareBytes.withUnsafeMutableBytes { read(fd, $0.baseAddress!, $0.count) }
+            guard gotData == Int(geometry.pageLength), gotSpare == 16,
+                  MemoryCardECC.verify(data: Data(dataBytes), spare: Data(spareBytes)) else {
+                throw ConversionFailure(message: "A written page failed its ECC check. Nothing was published.")
+            }
+        }
+        let verifier = S.Reader(fd: fd, size: size, geometry: geometry)
+        _ = verifier
+        let after = try S.scan(fd: fd, size: size, runner: runner, progress: { _ in })
+        guard let imported = after.first(where: { $0.name == manifest.save }) else {
+            throw ConversionFailure(message: "The imported save did not verify. Nothing was published.")
+        }
+        guard imported.files.count == payloads.count else {
+            throw ConversionFailure(message: "The imported save did not verify. Nothing was published.")
+        }
+        for (file, payload) in zip(imported.files.sorted(by: { $0.name < $1.name }),
+                                    payloads.sorted(by: { $0.name < $1.name })) {
+            guard file.name == payload.name, file.bytes == payload.bytes.count,
+                  file.sha256 == FileDigest.sha256(data: payload.bytes) else {
+                throw ConversionFailure(message: "Imported file “\(payload.name)” did not verify. Nothing was published.")
+            }
+        }
+        for old in baseline {
+            guard let current = after.first(where: { $0.name == old.name }) else {
+                throw ConversionFailure(message: "An existing save disappeared during import. Nothing was published.")
+            }
+            guard current.files.map({ "\($0.name):\($0.sha256)" }) == old.files.map({ "\($0.name):\($0.sha256)" }) else {
+                throw ConversionFailure(message: "Existing save “\(old.name)” changed during import. Nothing was published.")
+            }
+        }
+        // Surgical diff against the staged bytes: every differing page must
+        // be one this import wrote.
+        let staged = try Data(contentsOf: raw)
+        var live = Data(count: staged.count)
+        let liveCount: Int = live.withUnsafeMutableBytes { body in
+            var total = 0
+            while total < body.count {
+                if lseek(fd, off_t(total), SEEK_SET) < 0 { break }
+                let n = read(fd, body.baseAddress!.advanced(by: total), body.count - total)
+                if n < 0, errno == EINTR { continue }
+                guard n > 0 else { break }
+                total += n
+            }
+            return total
+        }
+        guard liveCount == staged.count else {
+            throw ConversionFailure(message: "The imported copy could not be re-read. Nothing was published.")
+        }
+        var offset = 0
+        while offset < staged.count {
+            let end = min(offset + Int(pageStride), staged.count)
+            if staged[offset..<end] != live[offset..<end] {
+                guard writtenPages.contains(UInt64(offset) / pageStride) else {
+                    throw ConversionFailure(message: "The import touched an unexpected page. Nothing was published.")
+                }
+            }
+            offset += Int(pageStride)
+        }
+        try runner.checkCancellation()
+        progress(ConversionProgress(stage: "Round-trip checking copy", fraction: 0.9))
+        // The helper only handles the standard card sizes; smaller synthetic
+        // fixtures verify everything else (ECC, re-parse, surgical diff).
+        let helperSizes = [8, 16, 32, 64].map { UInt64($0) * 1024 * 1024 / 512 * 528 }
+        if helperSizes.contains(size) {
+            let roundTrip = workspace.appendingPathComponent("roundtrip")
+            try runner.run(arguments: ["vmc-encrypt", raw.path, roundTrip.path],
+                           helper: helper, progress: { _ in })
+            let back = workspace.appendingPathComponent("roundtrip-back")
+            try runner.run(arguments: ["vmc-decrypt", roundTrip.path, back.path],
+                           helper: helper, progress: { _ in })
+            guard (try? Data(contentsOf: back)) == (try? Data(contentsOf: raw)) else {
+                throw ConversionFailure(message: "The imported copy failed its round-trip check. Nothing was published.")
+            }
+        }
+        try runner.checkCancellation()
+        // 8. Exclusive publication, then verification of the published bytes.
+        if !encrypted {
+            guard renamex_np(raw.path, destination.path, UInt32(RENAME_EXCL)) == 0 else {
+                throw ConversionFailure(message: "Cannot publish the import without replacing another item. Choose a new name on APFS or Mac OS Extended.")
+            }
+        } else {
+            try runner.run(arguments: ["vmc-encrypt", raw.path, destination.path], helper: helper, progress: progress)
+            let check = workspace.appendingPathComponent("published-check")
+            try runner.run(arguments: ["vmc-decrypt", destination.path, check.path], helper: helper, progress: { _ in })
+            try runner.checkCancellation()
+            let (checkFD, checkSize) = try S.openCard(check)
+            defer { close(checkFD) }
+            let published = try S.scan(fd: checkFD, size: checkSize, runner: runner, progress: { _ in })
+            guard published.first(where: { $0.name == manifest.save })?.files.map(\.sha256).sorted() ==
+                    imported.files.map(\.sha256).sorted() else {
+                try? FileManager.default.removeItem(at: destination)
+                throw ConversionFailure(message: "The published file did not verify. It was removed.")
+            }
+        }
+        try runner.checkCancellation()
+        let digest = try FileDigest.sha256(destination, cancelled: { try runner.checkCancellation() })
+        complete = true
+        progress(ConversionProgress(stage: "Save import verified", fraction: 1))
+        return Result(save: manifest.save,
+                      files: imported.files.map { ImportedFile(name: $0.name, bytes: $0.bytes, sha256: $0.sha256) },
+                      totalBytes: imported.totalBytes, cardSHA256: digest)
+    }
+}

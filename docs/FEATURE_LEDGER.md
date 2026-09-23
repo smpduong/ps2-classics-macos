@@ -1,4 +1,4 @@
-# Feature ledger — PS2 Classics for Mac 1.0 RC10
+# Feature ledger — PS2 Classics for Mac 1.0 RC11
 
 This ledger is deliberately honest about what is **implemented and tested**,
 what is **experimental**, and what is **deferred with a concrete prerequisite**.
@@ -6,7 +6,13 @@ A deferred optional feature is not an unresolved defect in an advertised
 capability; those deferred features remain outside the advertised scope. No placeholder or disabled
 buttons are added for work that is not done.
 
-## Implemented and tested locally (RC10 additions)
+## Implemented and tested locally (RC11 additions)
+
+| Area | Change | Evidence |
+| --- | --- | --- |
+| Individual-save import | Verified import of app exports into NEW card files: manifest-bound payloads only, copy-first workspace, strict allocation, reference-layout link entries, fresh ECC with zero tails, re-parse/diff/round-trip verification, exclusive publication; originals never modified | `MemoryCardImportTests` round-trip/collision/space/foreign/exclusive/cancel/encrypted/full-size; bit-exact ECC vectors plus erased/single-bit properties; independent manager filesystem check on import results |
+| Exact card ECC | Clean-room Hamming implementation proven bit-exact on 128 independent vectors; slice-base regression locked | `MemoryCardECCTests` |
+| CONFIG provenance research | Negative result recorded: leading community corpus is Sony-derived or unlicensed; no default feed | Changelog lineage in DEFERRED_WORK; generic importer unchanged |
 
 | Area | Change | Evidence |
 | --- | --- | --- |
@@ -55,9 +61,9 @@ buttons are added for work that is not done.
 
 - A curated public CONFIG feed with established file-level provenance. The generic HTTPS importer is available; there is no approved default catalog or automatic background updater.
 - Multi-track/audio CUE and CHD, older (v1–v4) CHD. These need explicit geometry, track/pregap/subchannel and version handling plus independent reference fixtures. Supported v5 single-data-track and single-level parent-dependent import remains unchanged.
-- Individual-save import (writing saves back into a card). Browse and verified
-  export are now implemented; import needs FAT allocation, pinned ECC handling
-  and kill-tested write boundaries.
+- Protected per-console card formats and real-card 16/32/64 MiB geometry coverage.
+  Browse, export and import are proven on synthetic fixtures; whole-card
+  backup/restore remains the safe path for anything unusual.
 - Mid-stream encryption resume. Completed verified stages can be reused; partially written ciphertext still cannot be resumed. The RC9 design record pins the nonce constraint and the exact journal slice; fault-injection tests for the fail-closed half already exist.
 
 See [DEFERRED_WORK.md](DEFERRED_WORK.md) for the remaining engineering scope. Real hardware acceptance and signing are separate from these enhancements.

@@ -30,11 +30,12 @@ final class MemoryCardSavesTests: XCTestCase {
             page(c * ppc, padded.prefix(512)); page(c * ppc + 1, padded.suffix(512))
         }
         func u32(_ v: UInt32) -> Data { Data([UInt8(v & 255), UInt8((v >> 8) & 255), UInt8((v >> 16) & 255), UInt8((v >> 24) & 255)]) }
-        func dirent(mode: UInt16, length: UInt32, cluster: UInt32, name: String) -> Data {
+        func dirent(mode: UInt16, length: UInt32, cluster: UInt32, name: String, dirEntry: UInt32 = 0) -> Data {
             var entry = Data(count: 512)
             entry[0] = UInt8(mode & 255); entry[1] = UInt8(mode >> 8)
             let l = u32(length); entry.replaceSubrange(4..<8, with: l)
             let c = u32(cluster); entry.replaceSubrange(0x10..<0x14, with: c)
+            let d = u32(dirEntry); entry.replaceSubrange(0x14..<0x18, with: d)
             let n = Data(name.utf8); entry.replaceSubrange(0x40..<0x40 + n.count, with: n)
             return entry
         }
@@ -58,7 +59,7 @@ final class MemoryCardSavesTests: XCTestCase {
         var rootEntries = [dirent(mode: 0x8427, length: 0, cluster: 0, name: "."), dirent(mode: 0x8427, length: 0, cluster: 0, name: "..")]
         var dirBlobs = [(chain: [Int], entries: [Data])]()
         for (saveName, files) in saves {
-            var entries = [dirent(mode: 0x8427, length: 0, cluster: 0, name: "."), dirent(mode: 0x8427, length: 0, cluster: 0, name: "..")]
+            var entries = [dirent(mode: 0x8427, length: 0, cluster: 0, name: ".", dirEntry: UInt32(rootEntries.count)), dirent(mode: 0x8427, length: 0, cluster: 0, name: "..")]
             for (fname, fdata) in files {
                 if fdata.isEmpty {
                     entries.append(dirent(mode: 0x8417, length: 0, cluster: Self.last, name: fname))

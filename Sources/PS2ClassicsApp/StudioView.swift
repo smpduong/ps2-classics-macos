@@ -499,6 +499,7 @@ struct CardView: View {
             }
             HStack {
                 Button("Browse saves…") { browseSaves() }.disabled(busy || source == nil)
+                Button("Import save…") { importSave() }.disabled(busy || source == nil)
                 Text("Read-only listing. Exports are verified copies; the card is never modified.").font(.caption).foregroundColor(.secondary)
             }
             if let saves {
@@ -589,6 +590,38 @@ struct CardView: View {
                     }
                 }.value
                 output=target;message="Save exported and re-verified. The card is unchanged."
+            } catch {message=error.localizedDescription}
+            busy=false;runner=nil;StudioModel.shared.endUtility(owned)
+        }
+    }
+    private func importSave() {
+        guard let source else { return }
+        let picker=NSOpenPanel();picker.canChooseFiles=false;picker.canChooseDirectories=true
+        picker.message="Choose a .ps2save folder previously exported by this app. Only verified exports can be imported."
+        guard picker.runModal() == .OK, let saveDir=picker.url else { return }
+        let saveName: String = {
+            guard let data = try? Data(contentsOf: saveDir.appendingPathComponent("manifest.json")) else {
+                return "save"
+            }
+            let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
+            return (try? decoder.decode(MemoryCardSaves.ExportManifest.self, from: data))?.save ?? "save"
+        }()
+        let panel=NSSavePanel()
+        panel.nameFieldStringValue=source.deletingPathExtension().lastPathComponent+"-with-"+saveName+"."+source.pathExtension
+        panel.message="Import into a NEW card file. The original card is never modified; the copy is fully verified before it is published."
+        guard panel.runModal() == .OK, let target=panel.url else { return }
+        let session=ConversionRunner()
+        guard let owned=StudioModel.shared.beginUtility(.convert,cancel:{session.cancel()}) else {message="Another operation is already running.";return}
+        runner=session;busy=true;output=nil;message="Importing save…";progress=0
+        let helper=StudioModel.shared.helperURL
+        Task {
+            do {
+                let result=try await Task.detached {
+                    try MemoryCardImport.importSave(saveDir,card:source,destination:target,helper:helper,runner:session) { update in
+                        Task { @MainActor in guard busy, runner === session else{return};progress=update.fraction }
+                    }
+                }.value
+                output=target;message="Imported \(result.save) (\(result.files.count) files) into a new verified copy. The original card is unchanged. Console acceptance is still required."
             } catch {message=error.localizedDescription}
             busy=false;runner=nil;StudioModel.shared.endUtility(owned)
         }
