@@ -1,3 +1,9 @@
+# RC14 validation — 2026-09-23
+
+RC14/build 23 fixes an integrity and memory flaw in save-import verification and reconciles the candidate's records. The encrypted-card round-trip and published-file checks previously compared two failable whole-file reads, so two failures compared equal and could pass; both now use a bounded streaming comparison that throws on missing, short, different, symlinked or cancelled inputs and never loads a whole card. Unverified published output is removed, and the import workspace (which holds full card copies) is removed on success as well as failure. Records: the client acceptance checklist is rewritten for this candidate, the project-plan heading and generated release-manifest external gates are corrected (the RC7-closed licence decision is no longer listed as open), and README no longer contradicts itself on save import; historical RC9–RC13 notes are left as their accurate records. Resume design evidence is now measured: `scripts/test-backend.py` proves two encryptions of identical inputs differ only in the header nonce (0x40–0x4F) and its covering authentication MAC (0x60–0x6F), with every segment byte deterministic.
+
+The full Swift suite contains 204 tests (173 core and 31 app), with zero failures and no skipped required tests in the strict run. The strict gate records final evidence in `test-results/v23-release-checks.json` (all 16 checks passed, `passed: true`), including the fresh extracted-source rebuild, and exact artifact hashes in `dist/release-manifest-1.0-RC14.json`. The `ps2-convert` helper is byte-identical to RC13, so disc-conversion evidence carries over; the four local ISOs re-passed read-only inspection. All external acceptance gates from RC13 remain open (see DEFERRED_WORK.md for the design/evidence/rights split).
+
 # RC13 validation — 2026-09-23
 
 RC13/build 22 locks every remaining write path and parser boundary into regressions with no behavior change: import root growth, deleted-slot reuse and multi-FAT-cluster files; truncation-at-any-offset card sweeps (fail-closed, never trap); CHD header version/field sweeps (25 negative cases); catalog shape sweeps; seeded ECC corruption properties; project round trips with parent discs. The full Swift suite contains 202 tests (171 core and 31 app), with zero failures and no skipped required tests in the strict run.
@@ -42,7 +48,7 @@ Manual format reference: pinned pop-fe2 commit `2afb9a3544e26ec1927f6389857240a0
 
 ## Historical records (capability and license statements below describe their dated candidate)
 
-# Validation records — current 1.0 RC6
+# Validation records — 1.0 RC6 (historical; superseded by the candidate sections above)
 
 Automated completion pass, 2026-09-22. Version 1.0.0/build 15, native Universal
 application for macOS 12+. This pass deliberately requires no new manual tests.

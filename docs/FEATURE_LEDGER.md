@@ -1,4 +1,4 @@
-# Feature ledger — PS2 Classics for Mac 1.0 RC13
+# Feature ledger — PS2 Classics for Mac 1.0 RC14
 
 This ledger is deliberately honest about what is **implemented and tested**,
 what is **experimental**, and what is **deferred with a concrete prerequisite**.
@@ -6,7 +6,12 @@ A deferred optional feature is not an unresolved defect in an advertised
 capability; those deferred features remain outside the advertised scope. No placeholder or disabled
 buttons are added for work that is not done.
 
-## Implemented and tested locally (RC13 write-path coverage)
+## Implemented and tested locally (RC14 verification integrity)
+
+| Area | Change | Evidence |
+| --- | --- | --- |
+| Import verification integrity | Round-trip and published-file checks use a bounded streaming comparison that throws on missing/short/different/symlink/cancelled inputs (a two-failure `nil == nil` pass is impossible); unverified output is removed; the workspace is removed on success and failure | `MemoryCardImportTests` strict-comparison and published-verification tests; workspace-leak assertion |
+| Resume design evidence | Measured that encryption differs only in the header nonce + its auth MAC; segment bytes deterministic | `scripts/test-backend.py` nonce case (design evidence, not resume) |
 
 | Area | Change | Evidence |
 | --- | --- | --- |

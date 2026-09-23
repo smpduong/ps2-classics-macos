@@ -172,8 +172,8 @@ def main():
             "Intel Monterey MacBook Air and M4 Mac mini runtime acceptance",
             "Physical USB behavior on supported destination filesystems (large files, disconnection)",
             "PS3 acceptance of the encoded ATRAC3 audio",
+            "PS3 acceptance of encoded manual display, FTP transfer/install, and imported-card saves",
             "Developer ID signing and notarization",
-            "Final distribution compliance review; original-code license selected as GPL-3.0-only",
         ],
     }
 

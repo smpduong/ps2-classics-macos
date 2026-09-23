@@ -42,6 +42,21 @@ def main():
         # Derived independently from pinned upstream C output, excluding its randomized header.
         assert hashlib.sha256(enc.read_bytes()[SEG:]).hexdigest() == '726a5513c73468f9bd6316e3d46c88a1c1954048d71cddc2e720868121a4f3ff'
         passed.append('pinned upstream known-answer ciphertext digest')
+        # Resume design evidence, measured not inferred: two encryptions of
+        # identical inputs differ only in the 16-byte header nonce (0x40)
+        # and the authentication MAC covering it (0x60); every other header
+        # byte and every segment byte is deterministic, so a retained header
+        # can be reused verbatim and a retained prefix authenticated by
+        # re-encryption.
+        nonce_src=d/'nonce-src'; nonce_src.write_bytes((bytes(range(256))*256)[:SEG*4])
+        first=d/'nonce-a.enc'; second=d/'nonce-b.enc'
+        encrypt(nonce_src,first); encrypt(nonce_src,second)
+        a,b=first.read_bytes(),second.read_bytes()
+        assert len(a)==len(b) and a[:0x40]==b[:0x40] and a[0x50:0x60]==b[0x50:0x60] and a[0x70:]==b[0x70:]
+        assert a[0x40:0x50]!=b[0x40:0x50] and a[0x60:0x70]!=b[0x60:0x70]
+        for enc_file,out in ((first,d/'nonce-a.out'),(second,d/'nonce-b.out')):
+            run('decrypt',enc_file,out,key,1); assert out.read_bytes()==nonce_src.read_bytes()
+        passed.append('encryption deterministic except the 16-byte header nonce and its covering auth MAC; headers reusable verbatim for resume')
         before=source.read_bytes()
         run('encrypt-raw',source,source,key,CID,1,ok=False)
         alias=d/'alias'; alias.symlink_to(source)

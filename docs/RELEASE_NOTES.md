@@ -1,3 +1,11 @@
+# Version 1.0 — release candidate 14 (RC14, build 23)
+
+- Correctness and memory fix in save import verification: the encrypted-card round-trip now streams a bounded byte comparison instead of comparing two failable whole-file reads. Previously two read failures compared equal (`nil == nil`) and could pass verification; now a missing, short, different, symlinked or cancelled comparison throws, and 64 MiB cards are never loaded whole. The published-file check likewise removes an unverified output, and the import workspace (which holds full card copies) is removed on success as well as failure.
+- Records reconciled for this candidate: the client acceptance checklist, project plan heading and generated release-manifest external gates (the RC7-closed licence decision is no longer listed as open); README no longer contradicts itself on save import. Historical RC9–RC13 notes are left as the accurate records of those builds.
+- Resume design evidence measured rather than inferred: two encryptions of identical inputs differ only in the 16-byte header nonce and its covering authentication MAC; every other header byte and every segment byte is deterministic (`scripts/test-backend.py` nonce case). This is recorded as design evidence for a future resume journal, not as implemented resume.
+
+Still a release candidate: PS3 install/launch/save/disc/audio/manual/FTP and imported-card save acceptance, client Intel Monterey and M4 runtime, physical USB behavior and Developer ID signing/notarization remain open. Deeper parent chains, older/multi-track CHD, stream resume and curated CONFIG feeds stay deferred (see DEFERRED_WORK.md for the design/evidence/rights split).
+
 # Version 1.0 — release candidate 13 (RC13, build 22)
 
 - Untested write-path coverage for save import: root growth, deleted-slot reuse and multi-FAT-cluster files are now proven, alongside truncation-at-any-offset parser sweeps, CHD header field sweeps, catalog shape sweeps, seeded ECC corruption properties and project round trips with parent discs. No behavior change; the verification already refused these cases, and now regressions lock each path.

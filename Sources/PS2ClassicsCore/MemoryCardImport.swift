@@ -147,6 +147,99 @@ public enum MemoryCardImport {
         return entry
     }
 
+    /// Bounded streaming byte comparison. Proves two files hold exactly the
+    /// same bytes with O(chunk) memory, checks lengths up front, propagates
+    /// every open/read error, and honors cancellation. Two failed reads never
+    /// compare equal: any failure throws instead of returning a verdict.
+    static func requireIdenticalFiles(_ first: URL, _ second: URL, context: String,
+                                      runner: ConversionRunner) throws {
+        func openRead(_ url: URL) throws -> Int32 {
+            guard url.isFileURL else {
+                throw ConversionFailure(message: "\(context): comparison file is not a local file.")
+            }
+            let fd = open(url.path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
+            guard fd >= 0 else {
+                throw ConversionFailure(message: "\(context): comparison file cannot be opened.")
+            }
+            return fd
+        }
+        let a = try openRead(first)
+        defer { close(a) }
+        let b = try openRead(second)
+        defer { close(b) }
+        var sa = stat(), sb = stat()
+        guard fstat(a, &sa) == 0, fstat(b, &sb) == 0,
+              (sa.st_mode & S_IFMT) == S_IFREG, (sb.st_mode & S_IFMT) == S_IFREG else {
+            throw ConversionFailure(message: "\(context): comparison files are not regular files.")
+        }
+        guard sa.st_size > 0, sa.st_size == sb.st_size else {
+            throw ConversionFailure(message: "\(context): files differ in length.")
+        }
+        var remaining = UInt64(sa.st_size)
+        var chunkA = [UInt8](repeating: 0, count: 1048576)
+        var chunkB = [UInt8](repeating: 0, count: 1048576)
+        while remaining > 0 {
+            try runner.checkCancellation()
+            let count = Int(min(remaining, 1048576))
+            let gotA: Int = chunkA.withUnsafeMutableBytes {
+                readExactly(fd: a, $0.baseAddress!, count)
+            }
+            let gotB: Int = chunkB.withUnsafeMutableBytes {
+                readExactly(fd: b, $0.baseAddress!, count)
+            }
+            // Short reads (truncation mid-compare, source change) fail rather
+            // than comparing a prefix as equal.
+            guard gotA == count, gotB == count,
+                  chunkA.prefix(count) == chunkB.prefix(count) else {
+                throw ConversionFailure(message: "\(context): files differ in content.")
+            }
+            remaining -= UInt64(count)
+        }
+    }
+
+    /// Reads up to `count` bytes unless EOF/error intervenes; returns what
+    /// was read. Retries on interrupt; any other shortfall is the caller's
+    /// mismatch to report, never silent agreement.
+    private static func readExactly(fd: Int32, _ base: UnsafeMutableRawPointer, _ count: Int) -> Int {
+        var total = 0
+        var pointer = base
+        while total < count {
+            let n = read(fd, pointer, count - total)
+            if n < 0, errno == EINTR { continue }
+            guard n > 0 else { break }
+            total += n
+            pointer += n
+        }
+        return total
+    }
+
+    /// Verifies an already-published encrypted file by decrypting it aside
+    /// and comparing digests. Anything that fails — verification, digest, or
+    /// cancellation — removes the published file first, so an unverified
+    /// result never stands as output.
+    static func verifyPublishedFile(at destination: URL, save: String, expectedSHA256s: [String],
+                                    helper: URL, runner: ConversionRunner, workspace: URL) throws {
+        typealias S = MemoryCardSaves
+        do {
+            let check = workspace.appendingPathComponent("published-check")
+            if FileManager.default.fileExists(atPath: check.path) {
+                try FileManager.default.removeItem(at: check)
+            }
+            try runner.run(arguments: ["vmc-decrypt", destination.path, check.path], helper: helper, progress: { _ in })
+            try runner.checkCancellation()
+            let (checkFD, checkSize) = try S.openCard(check)
+            defer { close(checkFD) }
+            let published = try S.scan(fd: checkFD, size: checkSize, runner: runner, progress: { _ in })
+            guard published.first(where: { $0.name == save })?.files.map(\.sha256).sorted() ==
+                    expectedSHA256s.sorted() else {
+                throw ConversionFailure(message: "The published file did not verify.")
+            }
+        } catch {
+            try? FileManager.default.removeItem(at: destination)
+            throw error
+        }
+    }
+
     @discardableResult
     public static func importSave(_ saveDir: URL, card: URL, destination: URL, helper: URL,
                                   runner: ConversionRunner,
@@ -517,8 +610,10 @@ public enum MemoryCardImport {
             let back = workspace.appendingPathComponent("roundtrip-back")
             try runner.run(arguments: ["vmc-decrypt", roundTrip.path, back.path],
                            helper: helper, progress: { _ in })
-            guard (try? Data(contentsOf: back)) == (try? Data(contentsOf: raw)) else {
-                throw ConversionFailure(message: "The imported copy failed its round-trip check. Nothing was published.")
+            do {
+                try requireIdenticalFiles(back, raw, context: "Round-trip check", runner: runner)
+            } catch {
+                throw ConversionFailure(message: "The imported copy failed its round-trip check (\(error.localizedDescription)). Nothing was published.")
             }
         }
         try runner.checkCancellation()
@@ -529,20 +624,16 @@ public enum MemoryCardImport {
             }
         } else {
             try runner.run(arguments: ["vmc-encrypt", raw.path, destination.path], helper: helper, progress: progress)
-            let check = workspace.appendingPathComponent("published-check")
-            try runner.run(arguments: ["vmc-decrypt", destination.path, check.path], helper: helper, progress: { _ in })
-            try runner.checkCancellation()
-            let (checkFD, checkSize) = try S.openCard(check)
-            defer { close(checkFD) }
-            let published = try S.scan(fd: checkFD, size: checkSize, runner: runner, progress: { _ in })
-            guard published.first(where: { $0.name == manifest.save })?.files.map(\.sha256).sorted() ==
-                    imported.files.map(\.sha256).sorted() else {
-                try? FileManager.default.removeItem(at: destination)
-                throw ConversionFailure(message: "The published file did not verify. It was removed.")
-            }
+            try verifyPublishedFile(at: destination, save: manifest.save,
+                                    expectedSHA256s: imported.files.map(\.sha256),
+                                    helper: helper, runner: runner, workspace: workspace)
         }
         try runner.checkCancellation()
         let digest = try FileDigest.sha256(destination, cancelled: { try runner.checkCancellation() })
+        // The workspace holds full card copies (staged, round-trip and check
+        // files); it is removed on success exactly as on failure, so no card
+        // bytes linger in temporary storage either way.
+        try? FileManager.default.removeItem(at: workspace)
         complete = true
         progress(ConversionProgress(stage: "Save import verified", fraction: 1))
         return Result(save: manifest.save,

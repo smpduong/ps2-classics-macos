@@ -142,6 +142,12 @@ final class MemoryCardImportTests: XCTestCase {
     }
 
     func testRoundTripExportImportPreservesEverything() throws {
+        func workspaces() -> Set<String> {
+            let names = (try? FileManager.default.contentsOfDirectory(
+                atPath: FileManager.default.temporaryDirectory.path)) ?? []
+            return Set(names.filter { $0.hasPrefix(".ps2-save-import-") || $0.hasPrefix(".ps2-save-scan-") })
+        }
+        let beforeWorkspaces = workspaces()
         let cardA = Self.build(saves: [("BASLUS-12345GAMEDATA",
                                         [("icon.sys", Self.icon), ("data.bin", Self.payload), ("empty.txt", Data())]),
                                        ("BESLES-54321EMPTY", [])])
@@ -171,6 +177,8 @@ final class MemoryCardImportTests: XCTestCase {
             XCTAssertEqual(imported.files.first(where: { $0.name == "data.bin" })?.sha256,
                            FileDigest.sha256(data: Self.payload))
             XCTAssertEqual(result.cardSHA256, try FileDigest.sha256(destination))
+            // No private workspace (with full card copies) lingers either way.
+            XCTAssertTrue(workspaces().subtracting(beforeWorkspaces).isEmpty)
         }
     }
 
@@ -510,6 +518,101 @@ final class MemoryCardImportTests: XCTestCase {
             XCTAssertEqual(saves.first(where: { $0.name == "BASLUS-12345GAMEDATA" })?
                 .files.first(where: { $0.name == "big.bin" })?.sha256,
                 FileDigest.sha256(data: big))
+        }
+    }
+
+    func testIdenticalFilesComparisonIsStrict() throws {
+        // The old round-trip check compared two failable whole-file reads,
+        // so two missing files compared equal (nil == nil) and passed. The
+        // streaming comparison must throw on every one of these instead.
+        try temporary { root in
+            let runner = ConversionRunner()
+            let same = root.appendingPathComponent("same.bin")
+            try Data("identical-bytes".utf8).write(to: same)
+            let twin = root.appendingPathComponent("twin.bin")
+            try Data("identical-bytes".utf8).write(to: twin)
+            try MemoryCardImport.requireIdenticalFiles(same, twin, context: "Test", runner: runner)
+            let missing = root.appendingPathComponent("missing.bin")
+            XCTAssertThrowsError(try MemoryCardImport.requireIdenticalFiles(missing, missing,
+                context: "Test", runner: runner))
+            XCTAssertThrowsError(try MemoryCardImport.requireIdenticalFiles(missing, same,
+                context: "Test", runner: runner))
+            XCTAssertThrowsError(try MemoryCardImport.requireIdenticalFiles(same, missing,
+                context: "Test", runner: runner))
+            let shorter = root.appendingPathComponent("shorter.bin")
+            try Data("identical-byte".utf8).write(to: shorter)
+            XCTAssertThrowsError(try MemoryCardImport.requireIdenticalFiles(same, shorter,
+                context: "Test", runner: runner))
+            let different = root.appendingPathComponent("different.bin")
+            try Data("identical-bytEs".utf8).write(to: different)
+            XCTAssertThrowsError(try MemoryCardImport.requireIdenticalFiles(same, different,
+                context: "Test", runner: runner))
+            let empty = root.appendingPathComponent("empty.bin")
+            try Data().write(to: empty)
+            XCTAssertThrowsError(try MemoryCardImport.requireIdenticalFiles(empty, empty,
+                context: "Test", runner: runner))
+            let link = root.appendingPathComponent("link.bin")
+            try FileManager.default.createSymbolicLink(at: link, withDestinationURL: same)
+            XCTAssertThrowsError(try MemoryCardImport.requireIdenticalFiles(link, same,
+                context: "Test", runner: runner))
+            let cancelled = ConversionRunner(); cancelled.cancel()
+            XCTAssertThrowsError(try MemoryCardImport.requireIdenticalFiles(same, twin,
+                context: "Test", runner: cancelled))
+            // Large files stream in bounded chunks rather than loading whole.
+            let bigA = root.appendingPathComponent("bigA.bin")
+            let bigB = root.appendingPathComponent("bigB.bin")
+            try Data(repeating: 0x5A, count: 8 * 1024 * 1024).write(to: bigA)
+            try Data(repeating: 0x5A, count: 8 * 1024 * 1024).write(to: bigB)
+            try MemoryCardImport.requireIdenticalFiles(bigA, bigB, context: "Test", runner: runner)
+            try FileManager.default.removeItem(at: bigB)
+            XCTAssertThrowsError(try MemoryCardImport.requireIdenticalFiles(bigA, bigB,
+                context: "Test", runner: runner))
+        }
+    }
+
+    func testPublishedVerificationRemovesUnverifiedOutput() throws {
+        let helper = try helper()
+        let cardB = Self.build(saves: [("BESLES-99999OTHER", [("note.dat", Data("hi".utf8))])],
+                               clusters: 8192, alloc: 41)
+        try temporary { root in
+            let rawB = try write(cardB, name: "b.VMC", in: root)
+            let encB = root.appendingPathComponent("b.VME")
+            try ConversionRunner().run(arguments: ["vmc-encrypt", rawB.path, encB.path],
+                                       helper: helper, progress: { _ in })
+            let workspace = root.appendingPathComponent("workspace")
+            try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: false)
+            // A published file without the expected save is removed.
+            let wrong = root.appendingPathComponent("wrong.VME")
+            try FileManager.default.copyItem(at: encB, to: wrong)
+            do {
+                try MemoryCardImport.verifyPublishedFile(at: wrong, save: "BASLUS-12345GAMEDATA",
+                                                         expectedSHA256s: [String(repeating: "a", count: 64)],
+                                                         helper: helper, runner: ConversionRunner(),
+                                                         workspace: workspace)
+                XCTFail("unverified publication must throw")
+            } catch {
+                XCTAssertTrue(error.localizedDescription.contains("did not verify"), error.localizedDescription)
+            }
+            XCTAssertFalse(FileManager.default.fileExists(atPath: wrong.path))
+            // Cancellation during verification removes the file too.
+            let cancelled = root.appendingPathComponent("cancelled.VME")
+            try FileManager.default.copyItem(at: encB, to: cancelled)
+            let stopper = ConversionRunner(); stopper.cancel()
+            XCTAssertThrowsError(try MemoryCardImport.verifyPublishedFile(at: cancelled, save: "BESLES-99999OTHER",
+                                                                          expectedSHA256s: [],
+                                                                          helper: helper, runner: stopper,
+                                                                          workspace: workspace))
+            XCTAssertFalse(FileManager.default.fileExists(atPath: cancelled.path))
+            // A matching publication is kept.
+            let right = root.appendingPathComponent("right.VME")
+            try FileManager.default.copyItem(at: encB, to: right)
+            let saves = try MemoryCardSaves.inventory(card: right, helper: helper, runner: ConversionRunner())
+            let other = try XCTUnwrap(saves.first(where: { $0.name == "BESLES-99999OTHER" }))
+            try MemoryCardImport.verifyPublishedFile(at: right, save: "BESLES-99999OTHER",
+                                                     expectedSHA256s: other.files.map(\.sha256),
+                                                     helper: helper, runner: ConversionRunner(),
+                                                     workspace: workspace)
+            XCTAssertTrue(FileManager.default.fileExists(atPath: right.path))
         }
     }
 }

@@ -105,7 +105,7 @@ no responsible implementation path (see prerequisite above).
 ## 4. Manuals, card backups and console transfer — implemented locally in RC8
 
 - Manuals use the `USRDIR/CONTENT/manual.idx` and numbered `.dxt` page format found in pinned pop-fe2 commit `2afb9a3544e26ec1927f6389857240a0fe4bc205`: 960×768, eight-byte little-endian dimensions plus opaque BC1 blocks. The renderer/encoder is original native code. Independent FFmpeg decoding and real synthetic package extraction check the result. PS3 display/navigation remains an external acceptance case. RC9 locks in the probed `/Rotate` behavior (rotated pages render upright) as a regression test.
-- Whole-card backup/restoration copies first, checks framing, performs native round-trip validation and verifies hashes. Existing files are not overwritten. Individual-save browsing and verified export are implemented in RC9 on synthetic fixtures (bounded parser, see below); save import (writing) is still deferred.
+- Whole-card backup/restoration copies first, checks framing, performs native round-trip validation and verifies hashes. Existing files are not overwritten. Individual-save browsing, verified export and verified import into new files are implemented (see §6 below for scope and open acceptance); in-place import and protected formats stay deferred.
 - FTP was selected from the user's protocol history. A local loopback server tests upload, read-back, corruption, truncation, extra bytes, failure and cancellation. No real console address, credentials or destination was supplied, and no real console was contacted. Real server command/path compatibility and installation are separate acceptance cases. RC9 adds an upload-abort mode and locks failure-message folder reporting into regressions.
 
 ## 5. Mid-stream resume
@@ -118,7 +118,11 @@ verified-stage reuse on retry; do not append to arbitrary partial ciphertext.
 byte-reproducible across runs by construction — `Sources/PS2Convert/main.c`
 seals each image with 16 `arc4random` nonce bytes in the header (offset
 0x40), so two encryptions of identical inputs differ in the header while
-every segment ciphertext stays deterministic. Any future resume must therefore
+every segment ciphertext stays deterministic. **Measured in RC14
+(`scripts/test-backend.py` nonce case): the differing bytes are exactly the
+nonce (0x40–0x4F) and the authentication MAC covering it (0x60–0x6F); all
+other header bytes and every segment byte are identical across runs, and
+both outputs decrypt to the source.** Any future resume must therefore
 reuse the partial's own header verbatim and authenticate the retained prefix
 by re-encrypting the source groups and comparing bytes (never by regenerating
 a header or trusting a length field). The retained journal must bind source
@@ -132,6 +136,17 @@ described above — scoped, but still larger than a safe single pass, so it
 remains deferred with this exact design.
 
 ## Concrete remaining implementation work
+
+Remaining items fall into three kinds, and are not all "blocked":
+
+- **Deferred engineering with a concrete design** (implementable locally, not
+  yet done): deeper-than-single-level parent chains, and the nonce-aware
+  partial-stream resume journal.
+- **Needs independent evidence before any implementation is responsible**:
+  older (v1–v4) CHD variants and multi-track/audio CHD/CUE (format/track/console
+  representation), and real-card 16/32/64 MiB geometry coverage for the card
+  tools.
+- **Needs a rights/provenance decision**: a curated default CONFIG feed.
 
 For deeper-than-single-level parent chains, carry the full ancestry with the
 same explicit selection, identity validation, depth/cycle bounds and
