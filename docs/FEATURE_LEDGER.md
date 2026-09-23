@@ -1,4 +1,4 @@
-# Feature ledger — PS2 Classics for Mac 1.0 RC12
+# Feature ledger — PS2 Classics for Mac 1.0 RC13
 
 This ledger is deliberately honest about what is **implemented and tested**,
 what is **experimental**, and what is **deferred with a concrete prerequisite**.
@@ -6,7 +6,12 @@ A deferred optional feature is not an unresolved defect in an advertised
 capability; those deferred features remain outside the advertised scope. No placeholder or disabled
 buttons are added for work that is not done.
 
-## Implemented and tested locally (RC12 hardening)
+## Implemented and tested locally (RC13 write-path coverage)
+
+| Area | Change | Evidence |
+| --- | --- | --- |
+| Import write paths | Root growth, deleted-slot reuse and multi-FAT-cluster files proven; truncation-at-any-offset parser sweeps never trap | `MemoryCardImportTests` root-extension/slot-reuse/large-file; truncation sweep |
+| Format sweeps | CHD header versions/fields, catalog shapes, seeded ECC corruption, project parent round trips locked | `test-chd.py` 25 negatives; catalog/ECC/parent regression tests |
 
 | Area | Change | Evidence |
 | --- | --- | --- |

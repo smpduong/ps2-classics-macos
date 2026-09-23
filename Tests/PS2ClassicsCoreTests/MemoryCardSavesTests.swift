@@ -312,4 +312,30 @@ final class MemoryCardSavesTests: XCTestCase {
             }
         }
     }
+
+    func testTruncationAtAnyOffsetFailsClosedNeverTraps() throws {
+        // Every truncation must throw a ConversionFailure (never trap), and
+        // every extension must fail the size check. Sizes step across page,
+        // spare, FAT, directory and payload boundaries of the small fixture.
+        let good = build(saves: standardSaves()).data
+        var sizes = [0, 1, 100, 511, 512, 527, 528, 529, 1056, 2048, 10000, 30000]
+        sizes += [good.count - 529, good.count - 528, good.count - 1]
+        sizes += [good.count + 1, good.count + 16383, good.count + 16385]
+        try temporary { root in
+            for size in sizes {
+                let url = root.appendingPathComponent("t-\(size).VMC")
+                var bytes = Data(good.prefix(min(size, good.count)))
+                if size > good.count { bytes.append(Data(count: size - good.count)) }
+                try bytes.write(to: url)
+                do {
+                    _ = try MemoryCardSaves.inventory(card: url, helper: URL(fileURLWithPath: "/nonexistent"),
+                                                      runner: ConversionRunner())
+                    XCTFail("truncated/extended size \(size) must fail")
+                } catch {
+                    XCTAssertFalse(error.localizedDescription.isEmpty, "size \(size)")
+                }
+                XCTAssertFalse(FileManager.default.fileExists(atPath: url.path + ".ps2save"))
+            }
+        }
+    }
 }

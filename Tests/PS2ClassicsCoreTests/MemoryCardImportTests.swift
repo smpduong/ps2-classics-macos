@@ -413,4 +413,103 @@ final class MemoryCardImportTests: XCTestCase {
             XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("wide.VMC").path))
         }
     }
+
+    func testRootExtensionImport() throws {
+        // A root directory filled to capacity forces the single-cluster root
+        // growth path: relink, zero-filled extension, slot math, count update.
+        let cardA = Self.build(saves: [("BASLUS-12345GAMEDATA", [("icon.sys", Self.icon)]),
+                                       ("BESLES-54321EMPTY", [])])
+        // Small card root holds 4 entries per 2 clusters; two saves fill it.
+        let cardB = Self.build(saves: [("BESLES-00001ONE", [("a.dat", Data("one".utf8))]),
+                                       ("BESLES-00002TWO", [("b.dat", Data("two".utf8))])])
+        try temporary { root in
+            let urlA = try write(cardA, name: "a.VMC", in: root)
+            let urlB = try write(cardB, name: "b.VMC", in: root)
+            let beforeB = try FileDigest.sha256(urlB)
+            XCTAssertEqual(try MemoryCardSaves.inventory(card: urlB,
+                                                          helper: URL(fileURLWithPath: "/nonexistent"),
+                                                          runner: ConversionRunner()).map(\.name),
+                           ["BESLES-00001ONE", "BESLES-00002TWO"])
+            let exported = try MemoryCardSaves.export(save: "BASLUS-12345GAMEDATA", card: urlA, into: root,
+                                                      helper: URL(fileURLWithPath: "/nonexistent"),
+                                                      runner: ConversionRunner())
+            let destination = root.appendingPathComponent("b-grown.VMC")
+            let result = try MemoryCardImport.importSave(exported, card: urlB, destination: destination,
+                                                         helper: URL(fileURLWithPath: "/nonexistent"),
+                                                         runner: ConversionRunner())
+            XCTAssertEqual(result.save, "BASLUS-12345GAMEDATA")
+            XCTAssertEqual(try FileDigest.sha256(urlB), beforeB)
+            let saves = try MemoryCardSaves.inventory(card: destination,
+                                                      helper: URL(fileURLWithPath: "/nonexistent"),
+                                                      runner: ConversionRunner())
+            XCTAssertEqual(saves.map(\.name).sorted(),
+                           ["BASLUS-12345GAMEDATA", "BESLES-00001ONE", "BESLES-00002TWO"])
+            XCTAssertEqual(saves.first(where: { $0.name == "BESLES-00002TWO" })?
+                .files.first(where: { $0.name == "b.dat" })?.sha256,
+                FileDigest.sha256(data: Data("two".utf8)))
+        }
+    }
+
+    func testDeletedSlotReuseImport() throws {
+        // A deleted root entry is reused in place: the root length does not
+        // grow and the other save is untouched.
+        var cardB = Self.build(saves: [("BESLES-99999OTHER", [("note.dat", Data("hi".utf8))]),
+                                       ("BESLES-00000DEAD", [("old.dat", Data("old".utf8))])])
+        // Clear EXISTS on the second save's root record (root cluster 0 is
+        // absolute cluster 10, pages 20-21; fourth entry at page 23).
+        cardB[23 * 528] = 0x04; cardB[23 * 528 + 1] = 0x27
+        let cardA = Self.build(saves: [("BASLUS-12345GAMEDATA", [("icon.sys", Self.icon)]),
+                                       ("BESLES-54321EMPTY", [])])
+        try temporary { root in
+            let urlA = try write(cardA, name: "a.VMC", in: root)
+            let urlB = try write(cardB, name: "b.VMC", in: root)
+            let exported = try MemoryCardSaves.export(save: "BASLUS-12345GAMEDATA", card: urlA, into: root,
+                                                      helper: URL(fileURLWithPath: "/nonexistent"),
+                                                      runner: ConversionRunner())
+            let destination = root.appendingPathComponent("b-reused.VMC")
+            _ = try MemoryCardImport.importSave(exported, card: urlB, destination: destination,
+                                                helper: URL(fileURLWithPath: "/nonexistent"),
+                                                runner: ConversionRunner())
+            let saves = try MemoryCardSaves.inventory(card: destination,
+                                                      helper: URL(fileURLWithPath: "/nonexistent"),
+                                                      runner: ConversionRunner())
+            XCTAssertEqual(saves.map(\.name).sorted(), ["BASLUS-12345GAMEDATA", "BESLES-99999OTHER"])
+            // The clusters of the deleted save are still marked used, so the
+            // importer must not have reallocated them: the new save's files
+            // hash exactly.
+            XCTAssertEqual(saves.first(where: { $0.name == "BASLUS-12345GAMEDATA" })?
+                .files.first(where: { $0.name == "icon.sys" })?.sha256,
+                FileDigest.sha256(data: Self.icon))
+        }
+    }
+
+    func testLargeFileSpanningFATClusters() throws {
+        // A 300 KiB file spans two FAT clusters, exercising multi-cluster
+        // FAT reads, writes and chain validation (full-size geometry, so the
+        // helper round trip runs too).
+        let helper = try helper()
+        let big = Data((0..<300 * 1024).map { UInt8(($0 * 31 + 7) % 256) })
+        let cardA = Self.build(saves: [("BASLUS-12345GAMEDATA", [("big.bin", big)]),
+                                       ("BESLES-54321EMPTY", [])],
+                               clusters: 8192, alloc: 41)
+        let cardB = Self.build(saves: [("BESLES-99999OTHER", [])], clusters: 8192, alloc: 41)
+        try temporary { root in
+            let urlA = try write(cardA, name: "a.VMC", in: root)
+            let urlB = try write(cardB, name: "b.VMC", in: root)
+            let exported = try MemoryCardSaves.export(save: "BASLUS-12345GAMEDATA", card: urlA, into: root,
+                                                      helper: helper,
+                                                      runner: ConversionRunner())
+            let destination = root.appendingPathComponent("b-big.VMC")
+            let result = try MemoryCardImport.importSave(exported, card: urlB, destination: destination,
+                                                         helper: helper,
+                                                         runner: ConversionRunner())
+            XCTAssertEqual(result.totalBytes, big.count)
+            let saves = try MemoryCardSaves.inventory(card: destination,
+                                                      helper: URL(fileURLWithPath: "/nonexistent"),
+                                                      runner: ConversionRunner())
+            XCTAssertEqual(saves.first(where: { $0.name == "BASLUS-12345GAMEDATA" })?
+                .files.first(where: { $0.name == "big.bin" })?.sha256,
+                FileDigest.sha256(data: big))
+        }
+    }
 }

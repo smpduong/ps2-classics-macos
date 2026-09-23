@@ -102,6 +102,25 @@ with tempfile.TemporaryDirectory(prefix='ps2-chd-check-') as tmp:
  failed=run([a.helper,'inspect-chd',garbage],False);assert 'Not a CHD image' in failed.stderr,failed.stderr[-300:]
  v4=bytearray((d/'zlib.chd').read_bytes());v4[12:16]=struct.pack('>I',4);v4path=d/'v4.chd';v4path.write_bytes(bytes(v4))
  failed=run([a.helper,'inspect-chd',v4path],False);assert 'version 4' in failed.stderr,failed.stderr[-300:]
+ # Header field sweep: every malformed geometry fails, and every detected
+ # non-v5 version is named. Nothing may crash or misread.
+ base=bytearray((d/'zlib.chd').read_bytes())
+ versions=[]
+ for version in [0,1,2,3,6,0xFFFFFFFF]:
+  mutated=bytearray(base);mutated[12:16]=struct.pack('>I',version)
+  path=d/f'version-{version}.chd';path.write_bytes(bytes(mutated))
+  failed=run([a.helper,'inspect-chd',path],False)
+  assert f'version {version}' in failed.stderr,(version,failed.stderr[-300:]);versions.append(version)
+ for name,patch in [('bad-length',lambda b:b.__setitem__(slice(8,12),struct.pack('>I',0))),
+   ('unit-zero',lambda b:b.__setitem__(slice(60,64),struct.pack('>I',0))),
+   ('hunk-zero',lambda b:b.__setitem__(slice(56,60),struct.pack('>I',0))),
+   ('logical-zero',lambda b:b.__setitem__(slice(32,40),struct.pack('>Q',0))),
+   ('magic-flip',lambda b:b.__setitem__(0,ord('X')))]:
+  mutated=bytearray(base);patch(mutated);path=d/(name+'.chd');path.write_bytes(bytes(mutated))
+  failed=run([a.helper,'inspect-chd',path],False)
+  assert failed.stderr.strip(),name
+  assert not (d/(name+'.iso')).exists()
+ print('Passed header field sweep:',sorted(versions),file=sys.stderr,flush=True)
  # Fail a real write and interrupt extraction; neither may publish partial output.
  def limit_output():resource.setrlimit(resource.RLIMIT_FSIZE,(1024,1024))
  fault=d/'write-fault.iso'
@@ -125,4 +144,4 @@ with tempfile.TemporaryDirectory(prefix='ps2-chd-check-') as tmp:
   project=dict(version=1,title='CHD workflow fixture',titleID='SLUS12345',discs=[dict(id=str(uuid.uuid4()),source=chd.as_uri(),gameID='SLUS12345',configSource='Synthetic')],support=dict(key=(d/'key').as_uri(),rap=(d/'rap').as_uri(),logo=(d/'logo').as_uri(),card=(d/'card').as_uri(),contentID=wf.CID),cropArtwork=False,output=out.as_uri())
   manifest=d/'project.ps2project';manifest.write_text(json.dumps(project));run([a.builder,manifest,a.helper]);wf.check_package(out,[source],'SLUS12345');print('Passed CHD package:',chd.name,file=sys.stderr,flush=True)
  assert not list(d.glob('.ps2-build-*')) and not list(d.glob('*.partial.*'))
- print(json.dumps(dict(passed=True,helper=wf.binary_info(a.helper),builder=wf.binary_info(a.builder),chdman=str(a.chdman),exactExtractions=len(fixtures),packages=3,negativeCases=14)))
+ print(json.dumps(dict(passed=True,helper=wf.binary_info(a.helper),builder=wf.binary_info(a.builder),chdman=str(a.chdman),exactExtractions=len(fixtures),packages=3,negativeCases=25)))

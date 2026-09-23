@@ -194,6 +194,47 @@ final class NetworkWorkflowTests:XCTestCase {
             XCTAssertNotNil(OnlineCatalogCache.load(url:urls.last!,under:root))
         }
     }
+    func testCatalogMalformedShapesFailClosed() throws {
+        func decode(_ object: Any) -> Bool {
+            (try? OnlineConfigCatalog.decode(JSONSerialization.data(withJSONObject: object))) != nil
+        }
+        func entry(_ overrides: [String: Any] = [:]) -> [String: Any] {
+            var base: [String: Any] = ["gameID": "SLUS12345", "title": "Test",
+                                       "url": "https://example.invalid/config",
+                                       "sha256": FileDigest.sha256(data: Data([1, 2, 3, 4])), "bytes": 4]
+            for (key, value) in overrides { base[key] = value }
+            return base
+        }
+        func catalog(_ entries: Any, extra: [String: Any] = [:]) -> [String: Any] {
+            var base: [String: Any] = ["version": 1, "source": "S", "revision": "r",
+                                       "license": "L", "entries": entries]
+            for (key, value) in extra { base[key] = value }
+            return base
+        }
+        // Structural mismatches are rejected.
+        XCTAssertFalse(decode(catalog("not-an-array")))
+        XCTAssertFalse(decode(catalog([["gameID": "SLUS12345"]])))
+        XCTAssertFalse(decode(catalog([entry(["gameID": NSNull()])])))
+        XCTAssertFalse(decode(catalog([entry(["bytes": "4"])])))
+        XCTAssertFalse(decode(catalog([entry(["bytes": -1])])))
+        XCTAssertFalse(decode(catalog([entry(["bytes": 1 << 40])])))
+        XCTAssertFalse(decode(catalog([entry(["gameID": "slus12345"])])))
+        XCTAssertFalse(decode(catalog([entry(["gameID": "SLUS1234"])])))
+        XCTAssertFalse(decode(catalog([entry(["url": "https://example.invalid:443/config?x=1#y"])])))
+        XCTAssertFalse(decode(catalog([entry(["sha256": String(repeating: "g", count: 64)])])))
+        XCTAssertFalse(decode(["version": "1", "source": "S", "revision": "r", "license": "L",
+                               "entries": [entry()]]))
+        XCTAssertFalse(decode(catalog([])))
+        // Unknown extra fields are tolerated (forwards-compatible reads).
+        XCTAssertTrue(decode(catalog([entry()], extra: ["publisherURL": "https://example.invalid"])))
+        var extraEntry = entry()
+        extraEntry["comment"] = "reviewer note"
+        XCTAssertTrue(decode(catalog([extraEntry])))
+        // Duplicate URLs with different digests are distinct variants.
+        var second = entry()
+        second["sha256"] = FileDigest.sha256(data: Data([5, 6, 7, 8]))
+        XCTAssertTrue(decode(catalog([entry(), second])))
+    }
     func testForeignCatalogEntryDownloadsNothing() throws {
         let data=Data([1,2,3,4]),hash=FileDigest.sha256(data:data)
         func catalog(_ url: String) throws -> OnlineConfigCatalog {

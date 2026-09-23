@@ -1,3 +1,10 @@
+# Version 1.0 — release candidate 13 (RC13, build 22)
+
+- Untested write-path coverage for save import: root growth, deleted-slot reuse and multi-FAT-cluster files are now proven, alongside truncation-at-any-offset parser sweeps, CHD header field sweeps, catalog shape sweeps, seeded ECC corruption properties and project round trips with parent discs. No behavior change; the verification already refused these cases, and now regressions lock each path.
+- No user-visible changes. All acceptance gates and deferred items stand as in RC12.
+
+Still a release candidate: PS3 install/launch/save/disc/audio/manual/FTP acceptance, client Intel Monterey and M4 runtime, physical USB behavior and Developer ID signing/notarization remain open. Protected card formats, real-card geometry coverage, deeper/older/multi-track CHD, stream resume and curated CONFIG feeds stay deferred.
+
 # Version 1.0 — release candidate 12 (RC12, build 21)
 
 - Import hardening from a hostile review of the new code: a damaged zero-length root no longer traps (it fails precisely), 1024-byte pages refuse import with a naming message (ECC is defined per 512-byte page), the surgical diff streams in bounded chunks with a free-space preflight, the offline catalog cache evicts oldest-beyond-16, and single-page-cluster plus wide-page geometries are proven by tests.

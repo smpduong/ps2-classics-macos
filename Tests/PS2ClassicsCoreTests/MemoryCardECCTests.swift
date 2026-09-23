@@ -192,4 +192,39 @@ final class MemoryCardECCTests: XCTestCase {
         XCTAssertNotEqual(whole, shifted)
         XCTAssertEqual(shifted, MemoryCardECC.calculatePage(Data(page.suffix(512))))
     }
+    func testSeededCorruptionIsAlwaysDetected() {
+        // Seeded PRNG (xorshift64*): intact pages verify; any 1- or 2-bit
+        // corruption across data and ECC bytes is detected, never accepted.
+        var state: UInt64 = 0x123456789ABCDEF
+        func next(_ bound: Int) -> Int {
+            state ^= state >> 12; state ^= state << 25; state ^= state >> 27
+            return Int((state &* 2685821657736338717) >> 32) % bound
+        }
+        for _ in 0..<16 {
+            var page = [UInt8](repeating: 0, count: 512)
+            for i in 0..<512 { page[i] = UInt8(next(256)) }
+            let pageData = Data(page)
+            let ecc = MemoryCardECC.calculatePage(pageData)
+            XCTAssertTrue(MemoryCardECC.verify(data: pageData,
+                                               spare: ecc + Data(count: 4)))
+            // Flip one data bit and one ECC bit, separately and together.
+            for trial in 0..<4 {
+                var badData = page
+                badData[next(512)] ^= UInt8(1 << next(8))
+                XCTAssertFalse(MemoryCardECC.verify(data: Data(badData),
+                                                    spare: ecc + Data(count: 4)), "trial \(trial)")
+                var badECC = [UInt8](ecc)
+                badECC[next(12)] ^= UInt8(1 << next(8))
+                XCTAssertFalse(MemoryCardECC.verify(data: pageData,
+                                                    spare: Data(badECC) + Data(count: 4)), "trial \(trial)")
+                // Two distinct data bits: they cannot cancel each other out.
+                var both = page
+                let first = next(4096), second = (first + 1 + next(4095)) % 4096
+                both[first / 8] ^= UInt8(1 << (first % 8))
+                both[second / 8] ^= UInt8(1 << (second % 8))
+                XCTAssertFalse(MemoryCardECC.verify(data: Data(both),
+                                                    spare: ecc + Data(count: 4)), "trial \(trial)")
+            }
+        }
+    }
 }

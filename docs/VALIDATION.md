@@ -1,3 +1,9 @@
+# RC13 validation — 2026-09-23
+
+RC13/build 22 locks every remaining write path and parser boundary into regressions with no behavior change: import root growth, deleted-slot reuse and multi-FAT-cluster files; truncation-at-any-offset card sweeps (fail-closed, never trap); CHD header version/field sweeps (25 negative cases); catalog shape sweeps; seeded ECC corruption properties; project round trips with parent discs. The full Swift suite contains 202 tests (171 core and 31 app), with zero failures and no skipped required tests in the strict run.
+
+The strict gate records final evidence in `test-results/v22-release-checks.json` (all 16 checks passed, `passed: true`), including the fresh extracted-source rebuild, and exact artifact hashes in `dist/release-manifest-1.0-RC13.json`. A receipt is valid only when its top-level `passed` is true. No disc-conversion code changed, so no package rebuild was claimed; the four local ISOs re-passed read-only inspection. All acceptance gates from RC12 remain open (see DEFERRED_WORK.md for exact prerequisites).
+
 # RC12 validation — 2026-09-23
 
 RC12/build 21 hardens the save importer with no behavior change beyond more precise refusals: trap-free damaged roots, geometry-scoped ECC (1024-byte pages refuse import while staying browsable), a streaming surgical diff with a free-space preflight, oldest-beyond-16 catalog eviction, and single-page-cluster plus hand-built wide-page geometry tests. The full Swift suite contains 195 tests (164 core and 31 app), with zero failures and no skipped required tests in the strict run.

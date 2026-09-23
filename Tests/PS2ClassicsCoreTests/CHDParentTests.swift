@@ -297,4 +297,24 @@ final class CHDParentTests: XCTestCase {
         tampered.discs[0].parentSHA256 = "ph1"
         XCTAssertNil(attempt.mismatch(against: tampered))
     }
+
+    func testProjectRoundTripPreservesParentSelection() throws {
+        var project = GameProject()
+        project.title = "Parent"
+        project.titleID = "SLUS12345"
+        project.support.contentID = "UP0001-SLUS12345_00-0000000000000001"
+        var disc = GameDisc(source: URL(fileURLWithPath: "/x/child.chd"), gameID: "")
+        disc.chdParent = URL(fileURLWithPath: "/x/parent.chd")
+        disc.chdParentSHA1 = String(repeating: "c", count: 40)
+        project.discs = [disc]
+        project.output = URL(fileURLWithPath: "/tmp/parent.pkg")
+        let decoded = try JSONDecoder().decode(GameProject.self, from: JSONEncoder().encode(project))
+        XCTAssertEqual(decoded.discs[0].chdParent, URL(fileURLWithPath: "/x/parent.chd"))
+        XCTAssertEqual(decoded.discs[0].chdParentSHA1, String(repeating: "c", count: 40))
+        XCTAssertFalse(decoded.discs[0].needsParent)
+        // The queued identity carries the parent path (hashes bind at build).
+        let queued = QueuedJobIdentity(jobID: UUID(), project: project)
+        XCTAssertEqual(queued.discs[0].parentSource, "/x/parent.chd")
+        XCTAssertNil(queued.discs[0].parentSHA256)
+    }
 }
