@@ -85,6 +85,10 @@ All four originals passed descriptor, boot-ID and full SHA-256 checks and comple
 
 All four originals passed descriptor, boot-ID and full SHA-256 checks and completed packages through the release 1.0 RC4 tools (CD-sized 520,135,344 B / 21.31 s, DVD9 8,502,254,080 B / 337.8 s, two-disc 9,411,154,448 B / 373.31 s, SLUS20892 then SLUS21133 retained). Every original hash matched the known value and was unchanged before/after, and each build report carried the durable attempt fingerprint, fit/crop setting and support/asset hashes. Each package passed independent Python decoding **and** identity-bound native `verify-package`. Times are development-host measurements, not client promises. Temporary outputs were removed. This is still local workflow/integrity evidence, not console behavior. RC4 additionally adds an optional WAV->ATRAC3 encoder whose output was validated by independent decoding.
 
+## RC22 follow-up
+
+The package-workflow harness fix was proven by a full run with the exact documented relative command (`python3 scripts/test-package-workflow.py --roms ROMS`): synthetic single/multi plus CD-sized 520,135,344 B, DVD9 8,502,254,080 B and two-disc 9,411,154,448 B packages (SLUS20892 then SLUS21133 retained). Every original hash matched the known value and was unchanged before/after; each package passed independent decoding and identity-bound native verification (`test-results/v31-real-packages.json`). All four originals also re-passed read-only descriptor, boot-ID and full SHA-256 checks (`test-results/rom-inspection.json`, passed). This remains local workflow/integrity evidence, not console behavior.
+
 ## RC20 follow-up
 
 No disc-conversion code changed (workspace message accuracy and docs only; the `ps2-convert` helper is byte-identical to RC19), so no package rebuild was claimed. All four originals re-passed read-only descriptor, boot-ID and full SHA-256 checks with the current helper (`test-results/rom-inspection.json`, passed). This remains local workflow/integrity evidence, not console behavior.

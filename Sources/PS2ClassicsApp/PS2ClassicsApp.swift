@@ -37,6 +37,15 @@ final class WorkspaceModel: ObservableObject {
 
     var busy: Bool { operation != .idle }
     var detecting: Bool { operation == .detecting }
+
+    /// Decrypt-mode guidance for files generic ISO inspection cannot parse.
+    /// An unrecognized file in decrypt mode may be a sealed CEX image, which
+    /// only Detect profile / decrypt / verify handle — the inspector text
+    /// alone must not read as "encrypted images are unsupported".
+    static func decryptModeNotice(action: ConversionAction, inspection: DiscInspection?) -> String? {
+        guard action == .decrypt, let inspection, !inspection.isSupported else { return nil }
+        return "Generic inspection does not parse this file. If it is a sealed CEX image, use Detect profile, then decrypt or verify with its disc number."
+    }
     var verifying: Bool { operation == .verifying }
 
     init(studio: StudioModel? = nil) {
@@ -80,6 +89,8 @@ final class WorkspaceModel: ObservableObject {
                 if inspected.requiresParent {
                     notice = nil
                     error = "This CHD stores differences against a parent image. Choose the exact parent CHD below; both originals stay unchanged."
+                } else if let guidance = Self.decryptModeNotice(action: action, inspection: inspected) {
+                    notice = guidance
                 }
             } catch { if token == owned { self.error = error.localizedDescription } }
             finish(owned)
@@ -107,6 +118,8 @@ final class WorkspaceModel: ObservableObject {
                 inspection = inspected
                 if inspected.requiresParent {
                     error = "This CHD stores differences against a parent image. Choose the exact parent CHD below; both originals stay unchanged."
+                } else if let guidance = Self.decryptModeNotice(action: action, inspection: inspected) {
+                    notice = guidance
                 }
             } catch { if token == owned { self.error = error.localizedDescription } }
             finish(owned)

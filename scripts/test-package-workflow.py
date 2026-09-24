@@ -100,6 +100,9 @@ def main():
     parser.add_argument('--ffmpeg',type=Path,help='Independent manual page decoder.')
     args=parser.parse_args();results=[]
     if args.manual and not args.ffmpeg: parser.error('--manual requires --ffmpeg')
+    # Project files carry file URLs, which need absolute paths: resolve the
+    # ROMS folder once so a relative --roms argument works like the defaults.
+    if args.roms: args.roms=args.roms.resolve()
     with tempfile.TemporaryDirectory(prefix='ps2-package-tests-') as tmp:
         d=Path(tmp);(d/'klic.bin').write_bytes(bytes(range(16)));(d/'license.rap').write_bytes(bytes(range(16)))
         (d/'PS3LOGO.DAT').write_bytes(b'SYNTHETIC TEST ASSET - NOT A CONSOLE LOGO')

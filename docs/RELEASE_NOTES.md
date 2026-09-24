@@ -1,3 +1,10 @@
+# Version 1.0 — release candidate 22 (RC22, build 31)
+
+- Two MacBook-report findings closed: `test-package-workflow.py --roms ROMS` failed on the relative path (`as_uri` rejects relative paths), so the harness now resolves the folder once, matching the existing `--sound`/`--manual` pattern; and selecting an encrypted image in Image-tools decrypt mode showed only the generic "not supported" inspector text, so decrypt mode now points unrecognized files at Detect profile. The latter is covered by model unit tests; the former by the full relative-path package run below.
+- Disc-conversion and app behavior otherwise unchanged.
+
+Still a release candidate: PS3 install/launch/save/disc/audio/manual/FTP and imported-card save acceptance, client Intel Monterey and M4 runtime, physical USB behavior and Developer ID signing/notarization remain open. Deeper parent chains, older/multi-track CHD, stream resume and curated CONFIG feeds stay deferred (see DEFERRED_WORK.md for the design/evidence/rights split).
+
 # Version 1.0 — release candidate 21 (RC21, build 30)
 
 - Sidebar candidate label derives from the release metadata: the RC20 app showed a hardcoded "1.0 RC8" while About/Info.plist said 1.0.0/build 29. The label now reads `CFBundleShortVersionString` plus the build-stamped `PS2ReleaseLabel` (both from release.json), degrading generically rather than wrongly when unknown. Covered by formatting/bundle unit tests and a manifest gate that asserts the stamped label and rejects any hardcoded `1.0 RC<n>` display string in Swift sources.

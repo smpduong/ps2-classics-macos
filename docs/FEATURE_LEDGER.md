@@ -1,10 +1,17 @@
-# Feature ledger — PS2 Classics for Mac 1.0 RC21
+# Feature ledger — PS2 Classics for Mac 1.0 RC22
 
 This ledger is deliberately honest about what is **implemented and tested**,
 what is **experimental**, and what is **deferred with a concrete prerequisite**.
 A deferred optional feature is not an unresolved defect in an advertised
 capability; those deferred features remain outside the advertised scope. No placeholder or disabled
 buttons are added for work that is not done.
+
+## Implemented and tested locally (RC22 report findings)
+
+| Area | Change | Evidence |
+| --- | --- | --- |
+| Package-workflow `--roms` | Relative folder resolved before file-URL construction, matching `--sound`/`--manual` | Full relative-path run: synthetic + CD/DVD9/two-disc packages, ROMS hash-identical |
+| Decrypt-mode inspection | Unrecognized files point at Detect profile instead of generic text alone | `WorkspaceModelTests`; no full GUI re-verification claimed |
 
 ## Implemented and tested locally (RC21 candidate identity)
 
