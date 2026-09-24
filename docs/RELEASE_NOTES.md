@@ -1,3 +1,10 @@
+# Version 1.0 — release candidate 16 (RC16, build 25)
+
+- Standard-size card geometry locked into regressions with no behavior change: synthetic 16/32/64 MiB cards now prove export/import round trips (allocation over large FATs, multi-cluster chains, per-page ECC, pre-write baseline diff, helper round trip) alongside the existing 8 MiB coverage. The new tests initially failed on a fixture error (FAT area overlapping the alloc region at larger sizes, precisely refused by the reader) and pass with corrected synthetic offsets; production code needed no change. Real-card layouts and console acceptance stay deferred.
+- Sizing note: deeper-than-single-level parent chains were scoped during this pass. Full ancestry must thread helper arguments, importer, build fingerprints, recovery records, saved projects, queue snapshots, stage cache and a multi-parent selection UI — RC10-scale work, so it remains deferred with its exact prerequisite rather than half-built.
+
+Still a release candidate: PS3 install/launch/save/disc/audio/manual/FTP and imported-card save acceptance, client Intel Monterey and M4 runtime, physical USB behavior and Developer ID signing/notarization remain open. Deeper parent chains, older/multi-track CHD, stream resume and curated CONFIG feeds stay deferred (see DEFERRED_WORK.md for the design/evidence/rights split).
+
 # Version 1.0 — release candidate 15 (RC15, build 24)
 
 - Surgical import diff against a pre-write baseline: the old check copied the already-modified result and compared it with itself, so stray writes passed. The final bytes are now compared against an immutable baseline captured before any write (both raw and decrypted inputs) in bounded cancellable chunks, with allowed pages derived from the planned allocation and metadata changes rather than from whatever writes happened to touch. An unrelated-page corruption on the real import path is locked in as a regression.

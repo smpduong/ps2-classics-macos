@@ -151,7 +151,10 @@ Remaining items fall into three kinds, and are not all "blocked":
 For deeper-than-single-level parent chains, carry the full ancestry with the
 same explicit selection, identity validation, depth/cycle bounds and
 fingerprinting the single-level path already has; until then they are refused
-precisely. Older versions need their own bounded header/map validation and
+precisely. Sized in RC16: the ancestry must thread helper arguments, importer,
+build fingerprints, recovery records, saved projects, queue snapshots, stage
+cache and a multi-parent selection UI — RC10-scale work, so it stays a
+multi-slice project rather than a single pass, and nothing half-built ships. Older versions need their own bounded header/map validation and
 independently produced fixtures. Multi-track formats additionally need a proven console representation for track timing and audio; silently dropping audio is not acceptable.
 
 For mid-stream resume, introduce an owned partial-stage journal tied to source/key/content/profile hashes, persist only complete authenticated groups after syncing them, verify the retained prefix before resuming, and test forced termination at every journal/data publication boundary. Integrate partial-stage retention with writer locks, cache limits, cancellation and recovery. This is unfinished engineering work; completed-stage reuse must not be relabelled as stream resume.
@@ -178,7 +181,9 @@ a surgical page diff, and a helper round trip — all fail-closed with no
 published output. ECC bit-exactness is proven against an independent
 implementation's 128 vectors plus erased/single-bit properties
 (`MemoryCardECCTests`); an independent card manager's filesystem check
-passes on import results. Real-card coverage (any size), 16/32/64 MiB
-geometry fixtures, protected per-console formats, and actual console
+passes on import results. Real-card coverage (any size, pinned 16/32/64 MiB
+layouts), protected per-console formats, and actual console
 acceptance of imported cards remain open; the original card is never
-modified, so a failed experiment always leaves the source intact.
+modified, so a failed experiment always leaves the source intact. Synthetic
+16/32/64 MiB geometries at the standard byte sizes are proven by round-trip
+regressions (RC16).

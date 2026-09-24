@@ -1,10 +1,17 @@
-# Feature ledger — PS2 Classics for Mac 1.0 RC15
+# Feature ledger — PS2 Classics for Mac 1.0 RC16
 
 This ledger is deliberately honest about what is **implemented and tested**,
 what is **experimental**, and what is **deferred with a concrete prerequisite**.
 A deferred optional feature is not an unresolved defect in an advertised
 capability; those deferred features remain outside the advertised scope. No placeholder or disabled
 buttons are added for work that is not done.
+
+## Implemented and tested locally (RC16 standard-size geometry)
+
+| Area | Change | Evidence |
+| --- | --- | --- |
+| Standard-size card geometry | Synthetic 16/32/64 MiB export/import round trips (large-FAT allocation, ECC, baseline diff, helper round trip); no behavior change; real-card layouts deferred | `MemoryCardImportTests` MiB round trips |
+| Deeper-chain sizing | Full ancestry must thread helper args, importer, fingerprints, recovery, projects, queue, cache and multi-parent UI — RC10-scale, still deferred, not half-built | DEFERRED_WORK scoping note |
 
 ## Implemented and tested locally (RC15 import verification completion)
 

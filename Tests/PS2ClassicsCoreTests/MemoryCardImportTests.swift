@@ -781,4 +781,96 @@ final class MemoryCardImportTests: XCTestCase {
             XCTAssertTrue(FileManager.default.fileExists(atPath: keep.path))
         }
     }
+
+    /// Standard-size geometry coverage: the helper advertises 8/16/32/64 MiB
+    /// cards and Swift proves 8 MiB end to end. Each larger size exercises the
+    /// same parametric paths (large-FAT allocation, multi-cluster chains, ECC,
+    /// baseline diff, helper round trip) at its own scale with no behavior
+    /// change expected; any size-specific bounds defect fails here first.
+    /// These are synthetic geometries at the standard byte sizes (alloc offset
+    /// set past the FAT area), not pinned real-card layouts — real-card layout
+    /// coverage stays deferred.
+    func testSixteenMiBGeometryRoundTrip() throws {
+        let helper = try helper()
+        let cardA = Self.build(saves: [("BASLUS-12345GAMEDATA", [("icon.sys", Self.icon), ("data.bin", Self.payload)]),
+                                       ("BESLES-54321EMPTY", [])],
+                               clusters: 16384, alloc: 73)
+        let cardB = Self.build(saves: [("BESLES-99999OTHER", [("note.dat", Data("hi".utf8))])],
+                               clusters: 16384, alloc: 73)
+        XCTAssertEqual(cardA.count, 16 * 1024 * 1024 / 512 * 528)
+        try temporary { root in
+            let urlA = try write(cardA, name: "a.VMC", in: root)
+            let urlB = try write(cardB, name: "b.VMC", in: root)
+            let beforeB = try FileDigest.sha256(urlB)
+            let exported = try exportGameData(from: urlA, in: root)
+            let destination = root.appendingPathComponent("b-with-save.VMC")
+            let result = try MemoryCardImport.importSave(exported, card: urlB, destination: destination,
+                                                         helper: helper, runner: ConversionRunner())
+            XCTAssertEqual(result.save, "BASLUS-12345GAMEDATA")
+            XCTAssertEqual(try FileDigest.sha256(urlB), beforeB)
+            let saves = try MemoryCardSaves.inventory(card: destination,
+                                                      helper: URL(fileURLWithPath: "/nonexistent"),
+                                                      runner: ConversionRunner())
+            XCTAssertEqual(saves.map(\.name).sorted(), ["BASLUS-12345GAMEDATA", "BESLES-99999OTHER"])
+            XCTAssertEqual(saves.first(where: { $0.name == "BASLUS-12345GAMEDATA" })?
+                .files.first(where: { $0.name == "data.bin" })?.sha256,
+                FileDigest.sha256(data: Self.payload))
+        }
+    }
+
+    func testThirtyTwoMiBGeometryRoundTrip() throws {
+        let helper = try helper()
+        let cardA = Self.build(saves: [("BASLUS-12345GAMEDATA", [("icon.sys", Self.icon), ("data.bin", Self.payload)]),
+                                       ("BESLES-54321EMPTY", [])],
+                               clusters: 32768, alloc: 137)
+        let cardB = Self.build(saves: [("BESLES-99999OTHER", [("note.dat", Data("hi".utf8))])],
+                               clusters: 32768, alloc: 137)
+        XCTAssertEqual(cardA.count, 32 * 1024 * 1024 / 512 * 528)
+        try temporary { root in
+            let urlA = try write(cardA, name: "a.VMC", in: root)
+            let urlB = try write(cardB, name: "b.VMC", in: root)
+            let beforeB = try FileDigest.sha256(urlB)
+            let exported = try exportGameData(from: urlA, in: root)
+            let destination = root.appendingPathComponent("b-with-save.VMC")
+            let result = try MemoryCardImport.importSave(exported, card: urlB, destination: destination,
+                                                         helper: helper, runner: ConversionRunner())
+            XCTAssertEqual(result.save, "BASLUS-12345GAMEDATA")
+            XCTAssertEqual(try FileDigest.sha256(urlB), beforeB)
+            let saves = try MemoryCardSaves.inventory(card: destination,
+                                                      helper: URL(fileURLWithPath: "/nonexistent"),
+                                                      runner: ConversionRunner())
+            XCTAssertEqual(saves.map(\.name).sorted(), ["BASLUS-12345GAMEDATA", "BESLES-99999OTHER"])
+            XCTAssertEqual(saves.first(where: { $0.name == "BASLUS-12345GAMEDATA" })?
+                .files.first(where: { $0.name == "data.bin" })?.sha256,
+                FileDigest.sha256(data: Self.payload))
+        }
+    }
+
+    func testSixtyFourMiBGeometryRoundTrip() throws {
+        let helper = try helper()
+        let cardA = Self.build(saves: [("BASLUS-12345GAMEDATA", [("icon.sys", Self.icon), ("data.bin", Self.payload)]),
+                                       ("BESLES-54321EMPTY", [])],
+                               clusters: 65536, alloc: 265)
+        let cardB = Self.build(saves: [("BESLES-99999OTHER", [("note.dat", Data("hi".utf8))])],
+                               clusters: 65536, alloc: 265)
+        XCTAssertEqual(cardA.count, 64 * 1024 * 1024 / 512 * 528)
+        try temporary { root in
+            let urlA = try write(cardA, name: "a.VMC", in: root)
+            let urlB = try write(cardB, name: "b.VMC", in: root)
+            let beforeB = try FileDigest.sha256(urlB)
+            let exported = try exportGameData(from: urlA, in: root)
+            let destination = root.appendingPathComponent("b-with-save.VMC")
+            let result = try MemoryCardImport.importSave(exported, card: urlB, destination: destination,
+                                                         helper: helper, runner: ConversionRunner())
+            XCTAssertEqual(result.save, "BASLUS-12345GAMEDATA")
+            XCTAssertEqual(try FileDigest.sha256(urlB), beforeB)
+            let saves = try MemoryCardSaves.inventory(card: destination,
+                                                      helper: URL(fileURLWithPath: "/nonexistent"),
+                                                      runner: ConversionRunner())
+            XCTAssertEqual(saves.map(\.name).sorted(), ["BASLUS-12345GAMEDATA", "BESLES-99999OTHER"])
+            XCTAssertEqual(saves.first(where: { $0.name == "BASLUS-12345GAMEDATA" })?
+                .files.first(where: { $0.name == "data.bin" })?.sha256,
+                FileDigest.sha256(data: Self.payload))
+        }
+    }
 }
