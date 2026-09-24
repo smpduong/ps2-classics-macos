@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-only
+import Darwin
 import XCTest
 @testable import PS2ClassicsCore
 
@@ -584,11 +585,13 @@ final class MemoryCardImportTests: XCTestCase {
             // A published file without the expected save is removed.
             let wrong = root.appendingPathComponent("wrong.VME")
             try FileManager.default.copyItem(at: encB, to: wrong)
+            let wrongIdentity = try XCTUnwrap(FileIdentity.of(wrong))
             do {
                 try MemoryCardImport.verifyPublishedFile(at: wrong, save: "BASLUS-12345GAMEDATA",
                                                          expectedSHA256s: [String(repeating: "a", count: 64)],
                                                          helper: helper, runner: ConversionRunner(),
-                                                         workspace: workspace, raw: rawB)
+                                                         workspace: workspace, raw: rawB,
+                                                         expectedIdentity: wrongIdentity)
                 XCTFail("unverified publication must throw")
             } catch {
                 XCTAssertTrue(error.localizedDescription.contains("did not verify"), error.localizedDescription)
@@ -597,21 +600,25 @@ final class MemoryCardImportTests: XCTestCase {
             // Cancellation during verification removes the file too.
             let cancelled = root.appendingPathComponent("cancelled.VME")
             try FileManager.default.copyItem(at: encB, to: cancelled)
+            let cancelledIdentity = try XCTUnwrap(FileIdentity.of(cancelled))
             let stopper = ConversionRunner(); stopper.cancel()
             XCTAssertThrowsError(try MemoryCardImport.verifyPublishedFile(at: cancelled, save: "BESLES-99999OTHER",
                                                                           expectedSHA256s: [],
                                                                           helper: helper, runner: stopper,
-                                                                          workspace: workspace, raw: rawB))
+                                                                          workspace: workspace, raw: rawB,
+                                                                          expectedIdentity: cancelledIdentity))
             XCTAssertFalse(FileManager.default.fileExists(atPath: cancelled.path))
             // A matching publication is kept.
             let right = root.appendingPathComponent("right.VME")
             try FileManager.default.copyItem(at: encB, to: right)
+            let rightIdentity = try XCTUnwrap(FileIdentity.of(right))
             let saves = try MemoryCardSaves.inventory(card: right, helper: helper, runner: ConversionRunner())
             let other = try XCTUnwrap(saves.first(where: { $0.name == "BESLES-99999OTHER" }))
             try MemoryCardImport.verifyPublishedFile(at: right, save: "BESLES-99999OTHER",
                                                      expectedSHA256s: other.files.map(\.sha256),
                                                      helper: helper, runner: ConversionRunner(),
-                                                     workspace: workspace, raw: rawB)
+                                                     workspace: workspace, raw: rawB,
+                                                     expectedIdentity: rightIdentity)
             XCTAssertTrue(FileManager.default.fileExists(atPath: right.path))
         }
     }
@@ -626,6 +633,7 @@ final class MemoryCardImportTests: XCTestCase {
         try temporary { root in
             let urlA = try write(cardA, name: "a.VMC", in: root)
             let urlB = try write(cardB, name: "b.VMC", in: root)
+            let beforeA = try FileDigest.sha256(urlA)
             let beforeB = try FileDigest.sha256(urlB)
             let exported = try exportGameData(from: urlA, in: root)
             let destination = root.appendingPathComponent("b-corrupt.VMC")
@@ -653,7 +661,7 @@ final class MemoryCardImportTests: XCTestCase {
             MemoryCardImport.testHookAfterWrites = nil
             XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
             XCTAssertEqual(try FileDigest.sha256(urlB), beforeB)
-            XCTAssertEqual(try FileDigest.sha256(urlA), try FileDigest.sha256(urlA))
+            XCTAssertEqual(try FileDigest.sha256(urlA), beforeA)
         }
     }
 
@@ -766,7 +774,8 @@ final class MemoryCardImportTests: XCTestCase {
                 try MemoryCardImport.verifyPublishedFile(at: tampered, save: "BASLUS-12345GAMEDATA",
                                                          expectedSHA256s: gamedata.files.map(\.sha256),
                                                          helper: helper, runner: ConversionRunner(),
-                                                         workspace: workspace, raw: raw)
+                                                         workspace: workspace, raw: raw,
+                                                         expectedIdentity: try XCTUnwrap(FileIdentity.of(tampered)))
                 XCTFail("unrelated-byte tampering must refuse")
             } catch {
                 XCTAssertTrue(error.localizedDescription.contains("did not verify"), error.localizedDescription)
@@ -777,7 +786,8 @@ final class MemoryCardImportTests: XCTestCase {
             try MemoryCardImport.verifyPublishedFile(at: keep, save: "BASLUS-12345GAMEDATA",
                                                      expectedSHA256s: gamedata.files.map(\.sha256),
                                                      helper: helper, runner: ConversionRunner(),
-                                                     workspace: workspace, raw: raw)
+                                                     workspace: workspace, raw: raw,
+                                                     expectedIdentity: try XCTUnwrap(FileIdentity.of(keep)))
             XCTAssertTrue(FileManager.default.fileExists(atPath: keep.path))
         }
     }
@@ -871,6 +881,127 @@ final class MemoryCardImportTests: XCTestCase {
             XCTAssertEqual(saves.first(where: { $0.name == "BASLUS-12345GAMEDATA" })?
                 .files.first(where: { $0.name == "data.bin" })?.sha256,
                 FileDigest.sha256(data: Self.payload))
+        }
+    }
+
+    func testNilIdentityCapturePreservesOutput() throws {
+        // If post-publication identity capture fails, production must never
+        // fall back to deleting whatever sits at the destination. The output
+        // is left in place and the error says so honestly.
+        let cardA = Self.build(saves: [("BASLUS-12345GAMEDATA", [("icon.sys", Self.icon)]),
+                                       ("BESLES-54321EMPTY", [])])
+        let cardB = Self.build(saves: [("BESLES-99999OTHER", [("note.dat", Data("hi".utf8))])])
+        try temporary { root in
+            let urlA = try write(cardA, name: "a.VMC", in: root)
+            let urlB = try write(cardB, name: "b.VMC", in: root)
+            let exported = try exportGameData(from: urlA, in: root)
+            let destination = root.appendingPathComponent("b-uncaptured.VMC")
+            MemoryCardImport.testFailIdentityCapture = true
+            defer { MemoryCardImport.testFailIdentityCapture = false }
+            do {
+                _ = try MemoryCardImport.importSave(exported, card: urlB, destination: destination,
+                                                    helper: URL(fileURLWithPath: "/nonexistent"),
+                                                    runner: ConversionRunner())
+                XCTFail("uncapturable publication must throw")
+            } catch {
+                XCTAssertTrue(error.localizedDescription.contains("ownership") ||
+                              error.localizedDescription.contains("left in place"),
+                              error.localizedDescription)
+            }
+            MemoryCardImport.testFailIdentityCapture = false
+            XCTAssertTrue(FileManager.default.fileExists(atPath: destination.path),
+                          "an unproven-owned output must never be deleted")
+        }
+    }
+
+    func testQuarantineWindowReplacementSurvives() throws {
+        // Plants a replacement at the destination inside the old
+        // check-then-delete window (after the owned file is secured aside,
+        // before the identity verdict). The replacement must survive and no
+        // quarantine leftovers may remain.
+        try temporary { root in
+            let destination = root.appendingPathComponent("owned.VMC")
+            try Data("original-output".utf8).write(to: destination)
+            let identity = try XCTUnwrap(FileIdentity.of(destination))
+            MemoryCardImport.testHookAfterQuarantineMove = {
+                try? Data("window-intruder".utf8).write(to: destination, options: .atomic)
+            }
+            defer { MemoryCardImport.testHookAfterQuarantineMove = nil }
+            try MemoryCardImport.removeOwnedOutput(at: destination, expected: identity)
+            MemoryCardImport.testHookAfterQuarantineMove = nil
+            XCTAssertEqual(try String(contentsOf: destination), "window-intruder")
+            let names = try FileManager.default.contentsOfDirectory(atPath: root.path)
+            XCTAssertFalse(names.contains(where: { $0.hasPrefix(".ps2-owned-remove-") }),
+                           "quarantine leftovers must not remain: \(names)")
+        }
+    }
+
+    func testQuarantinedRemovalRestoresForeignFile() throws {
+        // The destination holds a file this operation did not publish. Owned
+        // cleanup must leave it byte-identical in place with no leftovers.
+        try temporary { root in
+            let other = root.appendingPathComponent("other.VMC")
+            try Data("unrelated".utf8).write(to: other)
+            let foreignIdentity = try XCTUnwrap(FileIdentity.of(other))
+            let destination = root.appendingPathComponent("target.VME")
+            try Data("intruder".utf8).write(to: destination)
+            try MemoryCardImport.removeOwnedOutput(at: destination, expected: foreignIdentity)
+            XCTAssertEqual(try String(contentsOf: destination), "intruder")
+            XCTAssertTrue(FileManager.default.fileExists(atPath: other.path))
+            let names = try FileManager.default.contentsOfDirectory(atPath: root.path)
+            XCTAssertFalse(names.contains(where: { $0.hasPrefix(".ps2-owned-remove-") }),
+                           "quarantine leftovers must not remain: \(names)")
+        }
+    }
+
+    func testWorkspaceCleanupFailureIsHonest() throws {
+        // Locks the private workspace (immutable flag) after publication so
+        // its removal fails deterministically. Success must not be claimed:
+        // the error names the leftover workspace while the verified published
+        // output stands.
+        let cardA = Self.build(saves: [("BASLUS-12345GAMEDATA", [("icon.sys", Self.icon)]),
+                                       ("BESLES-54321EMPTY", [])])
+        let cardB = Self.build(saves: [("BESLES-99999OTHER", [("note.dat", Data("hi".utf8))])])
+        try temporary { root in
+            let urlA = try write(cardA, name: "a.VMC", in: root)
+            let urlB = try write(cardB, name: "b.VMC", in: root)
+            let exported = try exportGameData(from: urlA, in: root)
+            let destination = root.appendingPathComponent("b-locked-workspace.VMC")
+            let tmp = FileManager.default.temporaryDirectory
+            let beforeTmp = Set((try? FileManager.default.contentsOfDirectory(atPath: tmp.path)) ?? [])
+            var workspaceURL: URL?
+            MemoryCardImport.testHookAfterPublish = {
+                let names = (try? FileManager.default.contentsOfDirectory(atPath: tmp.path)) ?? []
+                guard let fresh = names.first(where: { $0.hasPrefix(".ps2-save-import-") && !beforeTmp.contains($0) }) else { return }
+                workspaceURL = tmp.appendingPathComponent(fresh)
+                workspaceURL!.path.withCString { chflags($0, UInt32(UF_IMMUTABLE)) }
+            }
+            defer {
+                MemoryCardImport.testHookAfterPublish = nil
+                if let workspaceURL {
+                    workspaceURL.path.withCString { chflags($0, 0) }
+                    try? FileManager.default.removeItem(at: workspaceURL)
+                }
+            }
+            do {
+                _ = try MemoryCardImport.importSave(exported, card: urlB, destination: destination,
+                                                    helper: URL(fileURLWithPath: "/nonexistent"),
+                                                    runner: ConversionRunner())
+                XCTFail("workspace cleanup failure must be reported")
+            } catch {
+                XCTAssertTrue(error.localizedDescription.contains("workspace") &&
+                              error.localizedDescription.contains("could not be removed"),
+                              error.localizedDescription)
+            }
+            MemoryCardImport.testHookAfterPublish = nil
+            XCTAssertTrue(FileManager.default.fileExists(atPath: destination.path),
+                          "the verified published output must stand")
+            if let workspaceURL {
+                XCTAssertTrue(FileManager.default.fileExists(atPath: workspaceURL.path),
+                              "the unremoved workspace must be reported, not silently dropped")
+            } else {
+                XCTFail("the hook did not capture the workspace")
+            }
         }
     }
 }

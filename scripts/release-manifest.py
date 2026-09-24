@@ -140,6 +140,31 @@ def at3_encode_smoke(helper: Path, scratch: Path, label: str):
     return out.stat().st_size
 
 
+def check_release_records(version: str, build: str, label: str, short_version: str):
+    """The acceptance template in the gate ledger is a hash-bound record: it
+    must name this exact artifact, manifest, version/build and corresponding
+    source archive, and must not retain any older source archive filename.
+    Runs inside the release gate so future staleness fails loudly instead of
+    shipping a checklist bound to the wrong source."""
+    ledger = (DOCS / "RELEASE_GATE_LEDGER.md").read_text()
+    marker = "## Acceptance results template"
+    assert marker in ledger, "release gate ledger has no acceptance template"
+    assert f"{marker} ({label})" in ledger, \
+        f"acceptance template heading does not match this candidate ({label})"
+    template = ledger.split(marker, 1)[1]
+    expected = [
+        f"dist/PS2 Classics for Mac {version} {label}.zip",
+        f"dist/release-manifest-{version}-{label}.json",
+        f"Version/build: {short_version} / {build}",
+        f"dist/source-baseline-{version}-{label}.tar.gz",
+    ]
+    for text in expected:
+        assert text in template, f"acceptance template is stale: missing {text!r}"
+    stale = [line.strip() for line in template.splitlines()
+             if "source-baseline-" in line and f"source-baseline-{version}-{label}.tar.gz" not in line]
+    assert not stale, f"acceptance template retains an older source archive: {stale}"
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--version", default="1.0")
@@ -244,6 +269,8 @@ def main():
         manifest["checks"].append("extracted bundled ps2-at3 encodes a synthetic WAV to valid ATRAC3 RIFF")
 
     out = ROOT / "dist" / f"release-manifest-{args.version}-{args.label}.json"
+    check_release_records(args.version, args.build, args.label, short_version)
+    manifest["checks"].append("acceptance template names this exact artifact, manifest, version/build and source archive with no older source retained")
     out.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
     print(f"Wrote {out}")
     print(f"Archive SHA-256: {zip_digest}")

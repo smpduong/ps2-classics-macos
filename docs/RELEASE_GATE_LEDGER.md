@@ -5,10 +5,10 @@ remains **open** for a final 1.0. It is deliberately explicit: a passing local
 suite is not evidence of console or client-hardware behaviour, and this build is
 therefore labelled a **1.0 release candidate**.
 
-Artifact under evaluation: `dist/PS2 Classics for Mac 1.0 RC16.zip`
-(`CFBundleShortVersionString` 1.0.0, `CFBundleVersion` 25, Universal
+Artifact under evaluation: `dist/PS2 Classics for Mac 1.0 RC17.zip`
+(`CFBundleShortVersionString` 1.0.0, `CFBundleVersion` 26, Universal
 `arm64` + `x86_64`, minimum macOS 12.0). Exact hashes are recorded in
-`dist/release-manifest-1.0-RC16.json` and `docs/VALIDATION.md`. RC15 build 24, RC14 build 23, RC13 build 22, RC12 build 21, RC11 build 20, RC10 build 19, RC9 build 18, RC8 build 17, RC7 build 16, RC6 build 15, RC5 build 14, RC4 build 13, RC3 build 12,
+`dist/release-manifest-1.0-RC17.json` and `docs/VALIDATION.md`. RC16 build 25, RC15 build 24, RC14 build 23, RC13 build 22, RC12 build 21, RC11 build 20, RC10 build 19, RC9 build 18, RC8 build 17, RC7 build 16, RC6 build 15, RC5 build 14, RC4 build 13, RC3 build 12,
 RC2 build 11, RC1 build 10 and all earlier archives are preserved.
 
 ## Gate history
@@ -95,15 +95,15 @@ passes on this artifact, it may be promoted from release candidate to 1.0 with
 no code change; otherwise the artifact stays a candidate and the findings feed
 the next build.
 
-## Acceptance results template (RC16)
+## Acceptance results template (RC17)
 
 Copy this into a new record and fill it in on the actual hardware. Every row is
 performed on **this exact artifact**:
 
 ```
-Artifact: dist/PS2 Classics for Mac 1.0 RC16.zip
-SHA-256: copy archiveSHA256 from dist/release-manifest-1.0-RC16.json
-Version/build: 1.0.0 / 25
+Artifact: dist/PS2 Classics for Mac 1.0 RC17.zip
+SHA-256: copy archiveSHA256 from dist/release-manifest-1.0-RC17.json
+Version/build: 1.0.0 / 26
 
 [ ] PS3 install        result:            title/disc/CID used:
 [ ] PS3 launch         result:            observed:
@@ -119,7 +119,7 @@ Version/build: 1.0.0 / 25
 [ ] Developer ID signing               result:
 [ ] Notarization                       result:
 [x] Owner licence decision             LICENSE and LICENSING.md
-[x] Corresponding-source package       dist/source-baseline-1.0-RC14.tar.gz
+[x] Corresponding-source package       dist/source-baseline-1.0-RC17.tar.gz
 [ ] PS3 manual display/navigation      result:
 [ ] PS3 FTP transfer/install           server/folder/result:
 [ ] PS3 imported-card save loads/saves result:
@@ -128,4 +128,4 @@ Version/build: 1.0.0 / 25
 Signature integrity checked locally is **not** Developer ID/notarization
 acceptance; cross-compilation is **not** runtime acceptance.
 
-Record all client acceptance against the RC16 manifest hash; earlier candidate hashes do not identify this build.
+Record all client acceptance against the RC17 manifest hash; earlier candidate hashes do not identify this build.

@@ -1,3 +1,11 @@
+# Version 1.0 — release candidate 17 (RC17, build 26)
+
+- Ownership-cleanup hole closed in save import: removing a published output now requires the identity captured right after publication — there is no identity-less fallback, and an uncapturable publication is left in place with an honest error instead of deleted blind. Deletion goes through an atomic quarantine protocol (move aside to a unique private name, verify the secured inode, only then delete), closing the check-then-delete race where a replacement landing between the check and the delete could be removed; foreign files are moved back, never deleted.
+- Honest workspace reporting: a private workspace that cannot be removed after a verified publish now throws an error naming its exact location (with the published card's digest) instead of silently claiming removal, and the good output is never deleted for a cleanup failure. Failure-path cleanup stays best-effort behind the thrown error.
+- Release hygiene: the acceptance template's corresponding-source line pointed at the RC14 archive under the RC16 artifact; it now names the exact current source archive, and the manifest step asserts template/artifact/manifest/version/source agreement every gate so staleness fails loudly.
+
+Still a release candidate: PS3 install/launch/save/disc/audio/manual/FTP and imported-card save acceptance, client Intel Monterey and M4 runtime, physical USB behavior and Developer ID signing/notarization remain open. Deeper parent chains, older/multi-track CHD, stream resume and curated CONFIG feeds stay deferred (see DEFERRED_WORK.md for the design/evidence/rights split).
+
 # Version 1.0 — release candidate 16 (RC16, build 25)
 
 - Standard-size card geometry locked into regressions with no behavior change: synthetic 16/32/64 MiB cards now prove export/import round trips (allocation over large FATs, multi-cluster chains, per-page ECC, pre-write baseline diff, helper round trip) alongside the existing 8 MiB coverage. The new tests initially failed on a fixture error (FAT area overlapping the alloc region at larger sizes, precisely refused by the reader) and pass with corrected synthetic offsets; production code needed no change. Real-card layouts and console acceptance stay deferred.

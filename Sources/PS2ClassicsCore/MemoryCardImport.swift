@@ -221,6 +221,13 @@ public enum MemoryCardImport {
     /// test can cancel during final hashing.
     static var testHookAfterWrites: ((Int32, MemoryCardSaves.Geometry, UInt64) -> Void)?
     static var testHookAfterPublish: (() throws -> Void)?
+    /// Forces post-publication identity capture to behave as if lstat failed,
+    /// exercising the fail-safe path (never delete without proven ownership).
+    static var testFailIdentityCapture = false
+    /// Runs after an owned output is moved to its private quarantine name but
+    /// before the quarantined identity is verified, so a test can plant a
+    /// replacement at the destination inside the old check-then-delete window.
+    static var testHookAfterQuarantineMove: (() -> Void)?
 
     /// Pages covering one allocatable (relative) cluster.
     static func pagesForRelativeCluster(_ relative: UInt64, geometry: MemoryCardSaves.Geometry) -> [UInt64] {
@@ -288,40 +295,68 @@ public enum MemoryCardImport {
         }
     }
 
-    /// Removes an exclusively published output only when ownership is proven:
-    /// the current file identity matches the identity captured right after
-    /// publication, is a regular file and is not a symlink. A missing file
-    /// (already removed) is success; a replaced file is left untouched. A
-    /// removal failure throws an honest error naming the leftover file.
-    static func removeOwnedOutput(at destination: URL, expected: FileIdentity?) throws {
-        guard let expected else {
-            // Legacy direct call without a captured identity (tests only):
-            // attempt removal so an unverified test file does not linger, and
-            // report honestly when that fails.
-            do {
-                try FileManager.default.removeItem(at: destination)
-            } catch {
-                throw ConversionFailure(message: "The published file did not verify, and it could not be removed. Remove \(destination.lastPathComponent) manually after checking it.")
-            }
+    /// Removes an exclusively published output through a race-safe quarantine
+    /// protocol. The destination is first moved atomically to a unique private
+    /// name in the same directory; only the quarantined inode, verified through
+    /// an open file description against `expected`, is ever deleted. A
+    /// replacement landing at the destination at any point — before, during or
+    /// after the move — is never deleted: a foreign quarantined file is moved
+    /// back, and a failure to restore is reported with both locations while
+    /// the file is kept. A missing destination (already removed) is success.
+    /// There is deliberately no identity-less fallback: without a captured
+    /// identity, ownership cannot be proven and nothing is removed.
+    static func removeOwnedOutput(at destination: URL, expected: FileIdentity) throws {
+        guard destination.isFileURL else {
+            throw ConversionFailure(message: "The import failed after publication, and the unverified output could not be secured for removal. Check \(destination.lastPathComponent) manually.")
+        }
+        let quarantine = destination.deletingLastPathComponent()
+            .appendingPathComponent(".ps2-owned-remove-" + UUID().uuidString)
+        guard renamex_np(destination.path, quarantine.path, UInt32(RENAME_EXCL)) == 0 else {
+            if errno == ENOENT { return } // Already gone: nothing of ours stands.
+            throw ConversionFailure(message: "The import failed after publication, and the unverified output at \(destination.lastPathComponent) could not be secured for removal. Remove it manually after checking it.")
+        }
+        if let moveHook = testHookAfterQuarantineMove { moveHook() }
+        let fd = open(quarantine.path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
+        guard fd >= 0 else {
+            // Unopenable (symlink or vanished under us): never delete blindly.
+            try restoreQuarantined(quarantine, to: destination)
             return
         }
-        guard let current = FileIdentity.of(destination) else { return } // already gone
-        guard current == expected, current.isRegularFile, !current.isSymbolicLink else { return } // replaced: never delete another file
+        defer { close(fd) }
+        var status = stat()
+        guard expected.isRegularFile, !expected.isSymbolicLink,
+              fstat(fd, &status) == 0,
+              (status.st_mode & S_IFMT) == S_IFREG,
+              UInt64(bitPattern: Int64(status.st_dev)) == expected.device,
+              UInt64(status.st_ino) == expected.inode else {
+            try restoreQuarantined(quarantine, to: destination)
+            return
+        }
         do {
-            try FileManager.default.removeItem(at: destination)
+            try FileManager.default.removeItem(at: quarantine)
         } catch {
-            throw ConversionFailure(message: "The import failed after publication, and the unverified output could not be removed. Remove \(destination.lastPathComponent) manually after checking it.")
+            throw ConversionFailure(message: "The import failed after publication, and the unverified output secured at \(quarantine.lastPathComponent) could not be removed. Remove it manually after checking it.")
+        }
+    }
+
+    /// Moves a quarantined file back to its destination without overwriting.
+    /// Throws an honest error naming both locations when the destination is
+    /// re-occupied or the move otherwise fails; the quarantined file is kept.
+    private static func restoreQuarantined(_ quarantine: URL, to destination: URL) throws {
+        guard renamex_np(quarantine.path, destination.path, UInt32(RENAME_EXCL)) == 0 else {
+            throw ConversionFailure(message: "A file this operation did not publish was preserved at \(quarantine.lastPathComponent) because \(destination.lastPathComponent) is now occupied. Review both manually before removing anything.")
         }
     }
 
     /// Verifies an already-published encrypted file by decrypting it aside,
     /// checking the imported save's hashes AND comparing the decrypted bytes
     /// byte-for-byte with the verified raw card. Anything that fails removes
-    /// only the proven-owned published file, so an unverified result never
-    /// stands as output and another file is never deleted.
+    /// only the proven-owned published file via the quarantine protocol, so an
+    /// unverified result never stands as output and another file is never
+    /// deleted. `expectedIdentity` is required: without it nothing is removed.
     static func verifyPublishedFile(at destination: URL, save: String, expectedSHA256s: [String],
                                     helper: URL, runner: ConversionRunner, workspace: URL,
-                                    raw: URL, expectedIdentity: FileIdentity? = nil) throws {
+                                    raw: URL, expectedIdentity: FileIdentity) throws {
         typealias S = MemoryCardSaves
         do {
             let check = workspace.appendingPathComponent("published-check")
@@ -417,6 +452,10 @@ public enum MemoryCardImport {
             throw ConversionFailure(message: "Cannot create a private import workspace.")
         }
         var complete = false
+        // Best-effort failure-path cleanup: the thrown error already reports
+        // the failure, and there is no channel to report a second cleanup
+        // failure without obscuring it; the system purges temporary
+        // directories. The success path above is explicit and honest instead.
         defer { if !complete { try? FileManager.default.removeItem(at: workspace) } }
         try runner.checkCancellation()
         progress(ConversionProgress(stage: "Copying card", fraction: 0.05))
@@ -749,21 +788,28 @@ public enum MemoryCardImport {
         // is honest in the thrown error instead of claiming nothing remains.
         var publishedIdentity: FileIdentity?
         var published = false
+        let digest: String
         do {
             if !encrypted {
                 guard renamex_np(raw.path, destination.path, UInt32(RENAME_EXCL)) == 0 else {
                     throw ConversionFailure(message: "Cannot publish the import without replacing another item. Choose a new name on APFS or Mac OS Extended.")
                 }
                 published = true
-                publishedIdentity = FileIdentity.of(destination)
+                guard !testFailIdentityCapture, let identity = FileIdentity.of(destination) else {
+                    throw ConversionFailure(message: "The import published \(destination.lastPathComponent) but ownership of the new file could not be proven. It was left in place for manual review; nothing was automatically removed.")
+                }
+                publishedIdentity = identity
             } else {
                 try runner.run(arguments: ["vmc-encrypt", raw.path, destination.path], helper: helper, progress: progress)
                 published = true
-                publishedIdentity = FileIdentity.of(destination)
+                guard !testFailIdentityCapture, let identity = FileIdentity.of(destination) else {
+                    throw ConversionFailure(message: "The import published \(destination.lastPathComponent) but ownership of the new file could not be proven. It was left in place for manual review; nothing was automatically removed.")
+                }
+                publishedIdentity = identity
                 try verifyPublishedFile(at: destination, save: manifest.save,
                                         expectedSHA256s: imported.files.map(\.sha256),
                                         helper: helper, runner: runner, workspace: workspace,
-                                        raw: raw, expectedIdentity: publishedIdentity)
+                                        raw: raw, expectedIdentity: identity)
             }
             // Test seam: a test cancels here so the final hashing fails after
             // the output already exists; cleanup must then remove only the
@@ -777,7 +823,7 @@ public enum MemoryCardImport {
                     throw ConversionFailure(message: "The destination changed after publication. Nothing was confirmed.")
                 }
             }
-            let digest = try FileDigest.sha256(destination, cancelled: { try runner.checkCancellation() })
+            digest = try FileDigest.sha256(destination, cancelled: { try runner.checkCancellation() })
             if published {
                 guard let expected = publishedIdentity,
                       let current = FileIdentity.of(destination),
@@ -785,24 +831,30 @@ public enum MemoryCardImport {
                     throw ConversionFailure(message: "The destination changed during verification. Nothing was confirmed.")
                 }
             }
-            // The workspace holds full card copies (baseline, round-trip and
-            // check files); it is removed on success exactly as on failure, so
-            // no card bytes linger in temporary storage either way.
-            try? FileManager.default.removeItem(at: workspace)
-            complete = true
-            progress(ConversionProgress(stage: "Save import verified", fraction: 1))
-            return Result(save: manifest.save,
-                          files: imported.files.map { ImportedFile(name: $0.name, bytes: $0.bytes, sha256: $0.sha256) },
-                          totalBytes: imported.totalBytes, cardSHA256: digest)
         } catch let original {
-            if published {
+            if published, let identity = publishedIdentity {
                 do {
-                    try removeOwnedOutput(at: destination, expected: publishedIdentity)
+                    try removeOwnedOutput(at: destination, expected: identity)
                 } catch let cleanupError as ConversionFailure {
                     throw ConversionFailure(message: "\(original.localizedDescription) \(cleanupError.localizedDescription)")
                 }
             }
             throw original
         }
+        // The card is verified and published at this point, so workspace
+        // cleanup runs outside output-ownership handling: its failure must
+        // never delete the good output. A leftover workspace still holds full
+        // card copies, so failure is reported with its exact location instead
+        // of claiming removal.
+        do {
+            try FileManager.default.removeItem(at: workspace)
+        } catch {
+            throw ConversionFailure(message: "Save import verified and published to \(destination.lastPathComponent) (card SHA-256 \(digest)), but the private workspace at \(workspace.path) could not be removed and still holds full card copies. Remove it manually.")
+        }
+        complete = true
+        progress(ConversionProgress(stage: "Save import verified", fraction: 1))
+        return Result(save: manifest.save,
+                      files: imported.files.map { ImportedFile(name: $0.name, bytes: $0.bytes, sha256: $0.sha256) },
+                      totalBytes: imported.totalBytes, cardSHA256: digest)
     }
 }

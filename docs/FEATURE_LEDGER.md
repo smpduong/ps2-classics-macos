@@ -1,10 +1,18 @@
-# Feature ledger — PS2 Classics for Mac 1.0 RC16
+# Feature ledger — PS2 Classics for Mac 1.0 RC17
 
 This ledger is deliberately honest about what is **implemented and tested**,
 what is **experimental**, and what is **deferred with a concrete prerequisite**.
 A deferred optional feature is not an unresolved defect in an advertised
 capability; those deferred features remain outside the advertised scope. No placeholder or disabled
 buttons are added for work that is not done.
+
+## Implemented and tested locally (RC17 ownership cleanup)
+
+| Area | Change | Evidence |
+| --- | --- | --- |
+| Owned-output removal | Required captured identity (no identity-less fallback); atomic quarantine protocol closes the check-then-delete race; foreign files restored, never deleted; uncapturable publications left in place honestly | `MemoryCardImportTests` nil-capture, quarantine-window and foreign-restore tests |
+| Workspace honesty | Unremovable workspace after a verified publish reports its exact location (with digest) instead of claiming removal; good output never deleted for cleanup failure | `MemoryCardImportTests` immutable-workspace test |
+| Release hygiene | Acceptance template names the exact current source archive; manifest step asserts template/artifact/manifest/version/source agreement every gate | `scripts/release-manifest.py` ledger check; RC14 stale line corrected |
 
 ## Implemented and tested locally (RC16 standard-size geometry)
 
