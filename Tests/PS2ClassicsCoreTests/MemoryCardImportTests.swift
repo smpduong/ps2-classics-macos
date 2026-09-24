@@ -588,7 +588,7 @@ final class MemoryCardImportTests: XCTestCase {
                 try MemoryCardImport.verifyPublishedFile(at: wrong, save: "BASLUS-12345GAMEDATA",
                                                          expectedSHA256s: [String(repeating: "a", count: 64)],
                                                          helper: helper, runner: ConversionRunner(),
-                                                         workspace: workspace)
+                                                         workspace: workspace, raw: rawB)
                 XCTFail("unverified publication must throw")
             } catch {
                 XCTAssertTrue(error.localizedDescription.contains("did not verify"), error.localizedDescription)
@@ -601,7 +601,7 @@ final class MemoryCardImportTests: XCTestCase {
             XCTAssertThrowsError(try MemoryCardImport.verifyPublishedFile(at: cancelled, save: "BESLES-99999OTHER",
                                                                           expectedSHA256s: [],
                                                                           helper: helper, runner: stopper,
-                                                                          workspace: workspace))
+                                                                          workspace: workspace, raw: rawB))
             XCTAssertFalse(FileManager.default.fileExists(atPath: cancelled.path))
             // A matching publication is kept.
             let right = root.appendingPathComponent("right.VME")
@@ -611,8 +611,174 @@ final class MemoryCardImportTests: XCTestCase {
             try MemoryCardImport.verifyPublishedFile(at: right, save: "BESLES-99999OTHER",
                                                      expectedSHA256s: other.files.map(\.sha256),
                                                      helper: helper, runner: ConversionRunner(),
-                                                     workspace: workspace)
+                                                     workspace: workspace, raw: rawB)
             XCTAssertTrue(FileManager.default.fileExists(atPath: right.path))
+        }
+    }
+
+    func testSurgicalDiffCatchesUnrelatedPageCorruption() throws {
+        // The old check copied the already-modified result and compared it
+        // with itself, so any stray write — including this free-page flip —
+        // passed. The pre-write baseline must refuse it on the real path.
+        let cardA = Self.build(saves: [("BASLUS-12345GAMEDATA", [("icon.sys", Self.icon)]),
+                                       ("BESLES-54321EMPTY", [])])
+        let cardB = Self.build(saves: [("BESLES-99999OTHER", [("note.dat", Data("hi".utf8))])])
+        try temporary { root in
+            let urlA = try write(cardA, name: "a.VMC", in: root)
+            let urlB = try write(cardB, name: "b.VMC", in: root)
+            let beforeB = try FileDigest.sha256(urlB)
+            let exported = try exportGameData(from: urlA, in: root)
+            let destination = root.appendingPathComponent("b-corrupt.VMC")
+            MemoryCardImport.testHookAfterWrites = { fd, geometry, size in
+                let stride = geometry.pageStride
+                let lastPage = size / stride - 1
+                let offset = lastPage * stride
+                let handle = FileHandle(fileDescriptor: fd, closeOnDealloc: false)
+                do {
+                    try handle.seek(toOffset: offset)
+                    guard let byte = try handle.read(upToCount: 1)?.first else { return }
+                    try handle.seek(toOffset: offset)
+                    try handle.write(contentsOf: Data([byte ^ 0xFF]))
+                } catch { return }
+            }
+            defer { MemoryCardImport.testHookAfterWrites = nil }
+            do {
+                _ = try MemoryCardImport.importSave(exported, card: urlB, destination: destination,
+                                                    helper: URL(fileURLWithPath: "/nonexistent"),
+                                                    runner: ConversionRunner())
+                XCTFail("unrelated-page corruption must refuse")
+            } catch {
+                XCTAssertTrue(error.localizedDescription.contains("unexpected page"), error.localizedDescription)
+            }
+            MemoryCardImport.testHookAfterWrites = nil
+            XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
+            XCTAssertEqual(try FileDigest.sha256(urlB), beforeB)
+            XCTAssertEqual(try FileDigest.sha256(urlA), try FileDigest.sha256(urlA))
+        }
+    }
+
+    func testPostPublicationCancellationRemovesOwnedVMC() throws {
+        let cardA = Self.build(saves: [("BASLUS-12345GAMEDATA", [("icon.sys", Self.icon)]),
+                                       ("BESLES-54321EMPTY", [])])
+        let cardB = Self.build(saves: [("BESLES-99999OTHER", [("note.dat", Data("hi".utf8))])])
+        try temporary { root in
+            let urlA = try write(cardA, name: "a.VMC", in: root)
+            let urlB = try write(cardB, name: "b.VMC", in: root)
+            let beforeB = try FileDigest.sha256(urlB)
+            let exported = try exportGameData(from: urlA, in: root)
+            let destination = root.appendingPathComponent("b-cancelled.VMC")
+            let runner = ConversionRunner()
+            MemoryCardImport.testHookAfterPublish = { runner.cancel() }
+            defer { MemoryCardImport.testHookAfterPublish = nil }
+            XCTAssertThrowsError(try MemoryCardImport.importSave(exported, card: urlB, destination: destination,
+                                                                 helper: URL(fileURLWithPath: "/nonexistent"),
+                                                                 runner: runner))
+            MemoryCardImport.testHookAfterPublish = nil
+            XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
+            XCTAssertEqual(try FileDigest.sha256(urlB), beforeB)
+        }
+    }
+
+    func testPostPublicationCancellationRemovesOwnedVME() throws {
+        let helper = try helper()
+        let cardA = Self.build(saves: [("BASLUS-12345GAMEDATA", [("icon.sys", Self.icon)]),
+                                       ("BESLES-54321EMPTY", [])],
+                               clusters: 8192, alloc: 41)
+        let cardB = Self.build(saves: [("BESLES-99999OTHER", [("note.dat", Data("hi".utf8))])],
+                               clusters: 8192, alloc: 41)
+        try temporary { root in
+            let urlA = try write(cardA, name: "a.VMC", in: root)
+            let rawB = try write(cardB, name: "b.VMC", in: root)
+            let encB = root.appendingPathComponent("b.VME")
+            try ConversionRunner().run(arguments: ["vmc-encrypt", rawB.path, encB.path],
+                                       helper: helper, progress: { _ in })
+            let before = try FileDigest.sha256(encB)
+            let exported = try exportGameData(from: urlA, in: root)
+            let destination = root.appendingPathComponent("b-cancelled.VME")
+            let runner = ConversionRunner()
+            MemoryCardImport.testHookAfterPublish = { runner.cancel() }
+            defer { MemoryCardImport.testHookAfterPublish = nil }
+            XCTAssertThrowsError(try MemoryCardImport.importSave(exported, card: encB, destination: destination,
+                                                                 helper: helper, runner: runner))
+            MemoryCardImport.testHookAfterPublish = nil
+            XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
+            XCTAssertEqual(try FileDigest.sha256(encB), before)
+        }
+    }
+
+    func testConcurrentReplacementIsNeverDeleted() throws {
+        // After exclusive publication the destination is swapped for an
+        // intruder file before final hashing. The failed operation must leave
+        // the intruder untouched — never delete a file it did not publish.
+        let cardA = Self.build(saves: [("BASLUS-12345GAMEDATA", [("icon.sys", Self.icon)]),
+                                       ("BESLES-54321EMPTY", [])])
+        let cardB = Self.build(saves: [("BESLES-99999OTHER", [("note.dat", Data("hi".utf8))])])
+        try temporary { root in
+            let urlA = try write(cardA, name: "a.VMC", in: root)
+            let urlB = try write(cardB, name: "b.VMC", in: root)
+            let exported = try exportGameData(from: urlA, in: root)
+            let destination = root.appendingPathComponent("b-replaced.VMC")
+            MemoryCardImport.testHookAfterPublish = {
+                try? FileManager.default.removeItem(at: destination)
+                try? Data("intruder".utf8).write(to: destination)
+            }
+            defer { MemoryCardImport.testHookAfterPublish = nil }
+            XCTAssertThrowsError(try MemoryCardImport.importSave(exported, card: urlB, destination: destination,
+                                                                 helper: URL(fileURLWithPath: "/nonexistent"),
+                                                                 runner: ConversionRunner()))
+            MemoryCardImport.testHookAfterPublish = nil
+            XCTAssertTrue(FileManager.default.fileExists(atPath: destination.path))
+            XCTAssertEqual(try String(contentsOf: destination), "intruder")
+        }
+    }
+
+    func testPublishedFullByteVerificationCatchesUnrelatedChange() throws {
+        // The imported save still hashes exactly, but a free-page byte
+        // elsewhere differs. The old save-hash-only check passed this; the
+        // full decrypted byte comparison must refuse and remove the output.
+        let helper = try helper()
+        let card = Self.build(saves: [("BASLUS-12345GAMEDATA", [("icon.sys", Self.icon)]),
+                                      ("BESLES-99999OTHER", [("note.dat", Data("hi".utf8))])],
+                              clusters: 8192, alloc: 41)
+        try temporary { root in
+            let raw = try write(card, name: "raw.VMC", in: root)
+            let saves = try MemoryCardSaves.inventory(card: raw,
+                                                      helper: URL(fileURLWithPath: "/nonexistent"),
+                                                      runner: ConversionRunner())
+            let gamedata = try XCTUnwrap(saves.first(where: { $0.name == "BASLUS-12345GAMEDATA" }))
+            let good = root.appendingPathComponent("good.VME")
+            try ConversionRunner().run(arguments: ["vmc-encrypt", raw.path, good.path],
+                                       helper: helper, progress: { _ in })
+            let tmp = root.appendingPathComponent("tmp.VMC")
+            try ConversionRunner().run(arguments: ["vmc-decrypt", good.path, tmp.path],
+                                       helper: helper, progress: { _ in })
+            var bytes = try Data(contentsOf: tmp)
+            let lastPageStart = bytes.count - 528
+            bytes[lastPageStart] ^= 0xFF
+            try? FileManager.default.removeItem(at: tmp)
+            try bytes.write(to: tmp, options: .withoutOverwriting)
+            let tampered = root.appendingPathComponent("tampered.VME")
+            try ConversionRunner().run(arguments: ["vmc-encrypt", tmp.path, tampered.path],
+                                       helper: helper, progress: { _ in })
+            let workspace = root.appendingPathComponent("workspace")
+            try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: false)
+            do {
+                try MemoryCardImport.verifyPublishedFile(at: tampered, save: "BASLUS-12345GAMEDATA",
+                                                         expectedSHA256s: gamedata.files.map(\.sha256),
+                                                         helper: helper, runner: ConversionRunner(),
+                                                         workspace: workspace, raw: raw)
+                XCTFail("unrelated-byte tampering must refuse")
+            } catch {
+                XCTAssertTrue(error.localizedDescription.contains("did not verify"), error.localizedDescription)
+            }
+            XCTAssertFalse(FileManager.default.fileExists(atPath: tampered.path))
+            let keep = root.appendingPathComponent("keep.VME")
+            try FileManager.default.copyItem(at: good, to: keep)
+            try MemoryCardImport.verifyPublishedFile(at: keep, save: "BASLUS-12345GAMEDATA",
+                                                     expectedSHA256s: gamedata.files.map(\.sha256),
+                                                     helper: helper, runner: ConversionRunner(),
+                                                     workspace: workspace, raw: raw)
+            XCTAssertTrue(FileManager.default.fileExists(atPath: keep.path))
         }
     }
 }

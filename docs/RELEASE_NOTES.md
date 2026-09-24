@@ -1,3 +1,12 @@
+# Version 1.0 — release candidate 15 (RC15, build 24)
+
+- Surgical import diff against a pre-write baseline: the old check copied the already-modified result and compared it with itself, so stray writes passed. The final bytes are now compared against an immutable baseline captured before any write (both raw and decrypted inputs) in bounded cancellable chunks, with allowed pages derived from the planned allocation and metadata changes rather than from whatever writes happened to touch. An unrelated-page corruption on the real import path is locked in as a regression.
+- Post-publication cleanup for both .VMC and .VME: cancellation or read failure during final hashing after exclusive rename/encryption removes only the proven-owned output and never a concurrently replaced file; removal failures are honest in the thrown error.
+- Full published-card verification: the decrypted published output is compared byte-for-byte with the verified raw card in addition to the imported-save hash check, so altered bytes elsewhere cannot escape behind matching hashes. RC14's round-trip streaming fix stands; its published-file hash-only scope is now completed as recorded in VALIDATION.md.
+- Records updated for this candidate (README, USER_GUIDE, FEATURE_LEDGER, RELEASE_GATE_LEDGER, PROJECT_PLAN, checklist); RC14 archives and hashes are preserved. The helper is unchanged, so disc-conversion evidence carries over with ROMS read-only.
+
+Still a release candidate: PS3 install/launch/save/disc/audio/manual/FTP and imported-card save acceptance, client Intel Monterey and M4 runtime, physical USB behavior and Developer ID signing/notarization remain open. Deeper parent chains, older/multi-track CHD, stream resume and curated CONFIG feeds stay deferred (see DEFERRED_WORK.md for the design/evidence/rights split).
+
 # Version 1.0 — release candidate 14 (RC14, build 23)
 
 - Correctness and memory fix in save import verification: the encrypted-card round-trip now streams a bounded byte comparison instead of comparing two failable whole-file reads. Previously two read failures compared equal (`nil == nil`) and could pass verification; now a missing, short, different, symlinked or cancelled comparison throws, and 64 MiB cards are never loaded whole. The published-file check likewise removes an unverified output, and the import workspace (which holds full card copies) is removed on success as well as failure.

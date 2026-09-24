@@ -213,12 +213,115 @@ public enum MemoryCardImport {
         return total
     }
 
-    /// Verifies an already-published encrypted file by decrypting it aside
-    /// and comparing digests. Anything that fails — verification, digest, or
-    /// cancellation — removes the published file first, so an unverified
-    /// result never stands as output.
+    /// Test seams (internal, reset by tests). `testHookAfterWrites` runs after
+    /// the import writes are flushed but before any verification, so a test
+    /// can corrupt an unrelated page through the live fd; the pre-write
+    /// baseline diff must then refuse. `testHookAfterPublish` runs after
+    /// exclusive publication but before the final cancellation/digest, so a
+    /// test can cancel during final hashing.
+    static var testHookAfterWrites: ((Int32, MemoryCardSaves.Geometry, UInt64) -> Void)?
+    static var testHookAfterPublish: (() throws -> Void)?
+
+    /// Pages covering one allocatable (relative) cluster.
+    static func pagesForRelativeCluster(_ relative: UInt64, geometry: MemoryCardSaves.Geometry) -> [UInt64] {
+        (0..<geometry.pagesPerCluster).map { (geometry.allocOffset + relative) * geometry.pagesPerCluster + $0 }
+    }
+
+    /// Pages covering one absolute cluster (for FAT clusters).
+    static func pagesForAbsoluteCluster(_ absolute: UInt64, geometry: MemoryCardSaves.Geometry) -> [UInt64] {
+        (0..<geometry.pagesPerCluster).map { absolute * geometry.pagesPerCluster + $0 }
+    }
+
+    /// Surgical diff against an immutable pre-write baseline. Every byte that
+    /// differs between the baseline file and the live fd must sit on a page in
+    /// `allowed` (derived from the planned allocation, not from what writes
+    /// happened to touch). Streams in bounded cancellable chunks with strict
+    /// length/read handling; any failure throws instead of passing.
+    static func verifySurgicalDiff(baseline: URL, liveFD: Int32, size: UInt64,
+                                   geometry: MemoryCardSaves.Geometry, allowed: Set<UInt64>,
+                                   runner: ConversionRunner) throws {
+        guard baseline.isFileURL else {
+            throw ConversionFailure(message: "The import baseline is not a local file. Nothing was published.")
+        }
+        let baseFD = open(baseline.path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
+        guard baseFD >= 0 else {
+            throw ConversionFailure(message: "The import baseline could not be read. Nothing was published.")
+        }
+        defer { close(baseFD) }
+        var st = stat()
+        guard fstat(baseFD, &st) == 0, (st.st_mode & S_IFMT) == S_IFREG,
+              st.st_size > 0, UInt64(st.st_size) == size else {
+            throw ConversionFailure(message: "The import baseline changed or is not a regular file. Nothing was published.")
+        }
+        let stride = geometry.pageStride
+        let chunk: UInt64 = 1024 * 1024
+        var offset: UInt64 = 0
+        while offset < size {
+            try runner.checkCancellation()
+            let count = Int(min(chunk, size - offset))
+            guard lseek(liveFD, off_t(offset), SEEK_SET) >= 0,
+                  lseek(baseFD, off_t(offset), SEEK_SET) >= 0 else {
+                throw ConversionFailure(message: "The imported copy could not be re-read. Nothing was published.")
+            }
+            var liveBytes = [UInt8](repeating: 0, count: count)
+            var baseBytes = [UInt8](repeating: 0, count: count)
+            let gotLive = liveBytes.withUnsafeMutableBytes { readExactly(fd: liveFD, $0.baseAddress!, count) }
+            let gotBase = baseBytes.withUnsafeMutableBytes { readExactly(fd: baseFD, $0.baseAddress!, count) }
+            guard gotLive == count, gotBase == count else {
+                throw ConversionFailure(message: "The imported copy could not be re-read. Nothing was published.")
+            }
+            if liveBytes != baseBytes {
+                var page = offset / stride
+                let last = (offset + UInt64(count) - 1) / stride
+                while page <= last {
+                    let start = Int(page * stride < offset ? 0 : page * stride - offset)
+                    let end = min(Int((page + 1) * stride - offset), count)
+                    if liveBytes[start..<end] != baseBytes[start..<end] {
+                        guard allowed.contains(page) else {
+                            throw ConversionFailure(message: "The import touched an unexpected page. Nothing was published.")
+                        }
+                    }
+                    page += 1
+                }
+            }
+            offset += UInt64(count)
+        }
+    }
+
+    /// Removes an exclusively published output only when ownership is proven:
+    /// the current file identity matches the identity captured right after
+    /// publication, is a regular file and is not a symlink. A missing file
+    /// (already removed) is success; a replaced file is left untouched. A
+    /// removal failure throws an honest error naming the leftover file.
+    static func removeOwnedOutput(at destination: URL, expected: FileIdentity?) throws {
+        guard let expected else {
+            // Legacy direct call without a captured identity (tests only):
+            // attempt removal so an unverified test file does not linger, and
+            // report honestly when that fails.
+            do {
+                try FileManager.default.removeItem(at: destination)
+            } catch {
+                throw ConversionFailure(message: "The published file did not verify, and it could not be removed. Remove \(destination.lastPathComponent) manually after checking it.")
+            }
+            return
+        }
+        guard let current = FileIdentity.of(destination) else { return } // already gone
+        guard current == expected, current.isRegularFile, !current.isSymbolicLink else { return } // replaced: never delete another file
+        do {
+            try FileManager.default.removeItem(at: destination)
+        } catch {
+            throw ConversionFailure(message: "The import failed after publication, and the unverified output could not be removed. Remove \(destination.lastPathComponent) manually after checking it.")
+        }
+    }
+
+    /// Verifies an already-published encrypted file by decrypting it aside,
+    /// checking the imported save's hashes AND comparing the decrypted bytes
+    /// byte-for-byte with the verified raw card. Anything that fails removes
+    /// only the proven-owned published file, so an unverified result never
+    /// stands as output and another file is never deleted.
     static func verifyPublishedFile(at destination: URL, save: String, expectedSHA256s: [String],
-                                    helper: URL, runner: ConversionRunner, workspace: URL) throws {
+                                    helper: URL, runner: ConversionRunner, workspace: URL,
+                                    raw: URL, expectedIdentity: FileIdentity? = nil) throws {
         typealias S = MemoryCardSaves
         do {
             let check = workspace.appendingPathComponent("published-check")
@@ -234,9 +337,24 @@ public enum MemoryCardImport {
                     expectedSHA256s.sorted() else {
                 throw ConversionFailure(message: "The published file did not verify.")
             }
-        } catch {
-            try? FileManager.default.removeItem(at: destination)
-            throw error
+            // Full-card check: altered bytes in another save or in metadata
+            // escape the save-hash comparison above, so the decrypted output
+            // must also match the verified raw card byte-for-byte.
+            do {
+                try requireIdenticalFiles(check, raw, context: "Published-card verification", runner: runner)
+            } catch {
+                throw ConversionFailure(message: "The published file did not verify (\(error.localizedDescription)).")
+            }
+        } catch let original {
+            // Only an output this operation published may be removed; a
+            // concurrently replaced file is left alone. A removal failure is
+            // honest in the thrown error instead of claiming nothing remains.
+            do {
+                try removeOwnedOutput(at: destination, expected: expectedIdentity)
+            } catch let cleanupError as ConversionFailure {
+                throw ConversionFailure(message: "\(original.localizedDescription) \(cleanupError.localizedDescription)")
+            }
+            throw original
         }
     }
 
@@ -328,12 +446,25 @@ public enum MemoryCardImport {
             throw ConversionFailure(message: "Cannot stage the card copy.")
         }
         let size = UInt64(status.st_size)
-        // The workspace temporarily holds the staged copy plus verification
-        // and round-trip files; refuse early rather than failing mid-write.
+        // The workspace temporarily holds the staged copy plus an immutable
+        // pre-write baseline, verification and round-trip files; refuse early
+        // rather than failing mid-write. Encrypted imports additionally decrypt
+        // the published file aside, so they reserve one more card size.
         let workspaceFree = (try? FileManager.default.attributesOfFileSystem(forPath: workspace.path)[.systemFreeSize] as? NSNumber)?.uint64Value ?? 0
-        let (needSpace, overflow) = size.multipliedReportingOverflow(by: 3)
+        let multiplier: UInt64 = encrypted ? 5 : 4
+        let (needSpace, overflow) = size.multipliedReportingOverflow(by: multiplier)
         guard !overflow, workspaceFree > needSpace + 64 * 1024 * 1024 else {
-            throw ConversionFailure(message: "Not enough free space for the import workspace (staged copy, verification and round trip). Free space first.")
+            throw ConversionFailure(message: "Not enough free space for the import workspace (staged copy, baseline, verification and round trip). Free space first.")
+        }
+        // Immutable pre-write baseline for the surgical diff, captured before
+        // any byte is written, for both raw (.VMC) and decrypted (.VME) inputs.
+        // The final card is compared against this file — never against a copy
+        // of itself — so stray writes cannot hide by copying the result.
+        let baselineURL = workspace.appendingPathComponent("baseline.copy")
+        do {
+            try FileManager.default.copyItem(at: raw, to: baselineURL)
+        } catch {
+            throw ConversionFailure(message: "Cannot stage the import baseline. Free space first.")
         }
         // 3. Baseline inventory of the copy (identical bytes to the source).
         let geometry = try S.readGeometry(fd: fd, size: size)
@@ -404,6 +535,30 @@ public enum MemoryCardImport {
         }
         let dirChain = Array(taken[cursor..<cursor + dirNeed]); cursor += dirNeed
         let rootExtra: [UInt64] = rootExtend ? [taken[cursor]] : []
+        // Allowed pages for the surgical diff, derived from the planned
+        // allocation and metadata changes — not from what writes happen to
+        // touch. A stray write elsewhere cannot whitelist itself.
+        var allowedPages = Set<UInt64>()
+        for rel in taken {
+            for page in pagesForRelativeCluster(rel, geometry: geometry) { allowedPages.insert(page) }
+        }
+        for rel in rootChain {
+            for page in pagesForRelativeCluster(rel, geometry: geometry) { allowedPages.insert(page) }
+        }
+        do {
+            var fatAbsolutes = Set<UInt32>()
+            for rel in taken {
+                fatAbsolutes.insert(try reader.fatEntryLocation(rel).fatCluster)
+            }
+            if rootExtend, let previous = rootChain.last {
+                fatAbsolutes.insert(try reader.fatEntryLocation(previous).fatCluster)
+            }
+            for absolute in fatAbsolutes {
+                for page in pagesForAbsoluteCluster(UInt64(absolute), geometry: geometry) { allowedPages.insert(page) }
+            }
+        } catch {
+            throw ConversionFailure(message: "The card's FAT index is damaged or points outside the file. Nothing was published.")
+        }
         try runner.checkCancellation()
         progress(ConversionProgress(stage: "Writing save files", fraction: 0.55))
         // 6. Writes. Every touched page gets fresh ECC plus a zero tail and
@@ -515,6 +670,10 @@ public enum MemoryCardImport {
         guard fsync(fd) == 0 else {
             throw ConversionFailure(message: "The import workspace could not be flushed.")
         }
+        // Test seam: corrupt an unrelated page through the live fd. The old
+        // self-comparison (copying the result, then comparing it with itself)
+        // would miss this; the pre-write baseline diff below must refuse.
+        if let hook = testHookAfterWrites { hook(fd, geometry, size) }
         try runner.checkCancellation()
         progress(ConversionProgress(stage: "Verifying imported save", fraction: 0.75))
         // 7. Verify: ECC on every written page, a full re-parse, a surgical
@@ -558,46 +717,12 @@ public enum MemoryCardImport {
                 throw ConversionFailure(message: "Existing save “\(old.name)” changed during import. Nothing was published.")
             }
         }
-        // Surgical diff against the staged bytes: every differing page must
-        // be one this import wrote. The staged copy lives on disk (not in
-        // memory) and both sides stream in bounded chunks.
-        let stagedURL = workspace.appendingPathComponent("staged.copy")
-        try FileManager.default.copyItem(at: raw, to: stagedURL)
-        let stagedFD = open(stagedURL.path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
-        guard stagedFD >= 0 else { throw ConversionFailure(message: "The import workspace could not be read.") }
-        defer { close(stagedFD) }
-        let chunk = 1024 * 1024
-        var diffOffset: UInt64 = 0
-        while diffOffset < size {
-            try runner.checkCancellation()
-            let count = Int(min(UInt64(chunk), size - diffOffset))
-            guard lseek(fd, off_t(diffOffset), SEEK_SET) >= 0,
-                  lseek(stagedFD, off_t(diffOffset), SEEK_SET) >= 0 else {
-                throw ConversionFailure(message: "The imported copy could not be re-read. Nothing was published.")
-            }
-            var liveBytes = [UInt8](repeating: 0, count: count)
-            var stagedBytes = [UInt8](repeating: 0, count: count)
-            let gotLive = liveBytes.withUnsafeMutableBytes { read(fd, $0.baseAddress!, $0.count) }
-            let gotStaged = stagedBytes.withUnsafeMutableBytes { read(stagedFD, $0.baseAddress!, $0.count) }
-            guard gotLive == count, gotStaged == count else {
-                throw ConversionFailure(message: "The imported copy could not be re-read. Nothing was published.")
-            }
-            if liveBytes != stagedBytes {
-                var page = diffOffset / pageStride
-                let last = (diffOffset + UInt64(count) - 1) / pageStride
-                while page <= last {
-                    let start = Int(page * pageStride < diffOffset ? 0 : page * pageStride - diffOffset)
-                    let end = min(Int((page + 1) * pageStride - diffOffset), count)
-                    if liveBytes[start..<end] != stagedBytes[start..<end] {
-                        guard writtenPages.contains(page) else {
-                            throw ConversionFailure(message: "The import touched an unexpected page. Nothing was published.")
-                        }
-                    }
-                    page += 1
-                }
-            }
-            diffOffset += UInt64(count)
-        }
+        // Surgical diff against the immutable pre-write baseline: every
+        // differing page must sit in the planned allowed set. Both sides stream
+        // in bounded cancellable chunks; the baseline was captured before any
+        // write, so a stray write cannot hide by copying the result.
+        try verifySurgicalDiff(baseline: baselineURL, liveFD: fd, size: size,
+                               geometry: geometry, allowed: allowedPages, runner: runner)
         try runner.checkCancellation()
         progress(ConversionProgress(stage: "Round-trip checking copy", fraction: 0.9))
         // The helper only handles the standard card sizes; smaller synthetic
@@ -618,26 +743,66 @@ public enum MemoryCardImport {
         }
         try runner.checkCancellation()
         // 8. Exclusive publication, then verification of the published bytes.
-        if !encrypted {
-            guard renamex_np(raw.path, destination.path, UInt32(RENAME_EXCL)) == 0 else {
-                throw ConversionFailure(message: "Cannot publish the import without replacing another item. Choose a new name on APFS or Mac OS Extended.")
+        // A failure after publication (cancellation, digest read failure) must
+        // publish nothing: only an output whose ownership is proven is removed,
+        // a concurrently replaced file is never deleted, and a removal failure
+        // is honest in the thrown error instead of claiming nothing remains.
+        var publishedIdentity: FileIdentity?
+        var published = false
+        do {
+            if !encrypted {
+                guard renamex_np(raw.path, destination.path, UInt32(RENAME_EXCL)) == 0 else {
+                    throw ConversionFailure(message: "Cannot publish the import without replacing another item. Choose a new name on APFS or Mac OS Extended.")
+                }
+                published = true
+                publishedIdentity = FileIdentity.of(destination)
+            } else {
+                try runner.run(arguments: ["vmc-encrypt", raw.path, destination.path], helper: helper, progress: progress)
+                published = true
+                publishedIdentity = FileIdentity.of(destination)
+                try verifyPublishedFile(at: destination, save: manifest.save,
+                                        expectedSHA256s: imported.files.map(\.sha256),
+                                        helper: helper, runner: runner, workspace: workspace,
+                                        raw: raw, expectedIdentity: publishedIdentity)
             }
-        } else {
-            try runner.run(arguments: ["vmc-encrypt", raw.path, destination.path], helper: helper, progress: progress)
-            try verifyPublishedFile(at: destination, save: manifest.save,
-                                    expectedSHA256s: imported.files.map(\.sha256),
-                                    helper: helper, runner: runner, workspace: workspace)
+            // Test seam: a test cancels here so the final hashing fails after
+            // the output already exists; cleanup must then remove only the
+            // proven-owned file.
+            if let hook = testHookAfterPublish { try hook() }
+            try runner.checkCancellation()
+            if published {
+                guard let expected = publishedIdentity,
+                      let current = FileIdentity.of(destination),
+                      current == expected, current.isRegularFile, !current.isSymbolicLink else {
+                    throw ConversionFailure(message: "The destination changed after publication. Nothing was confirmed.")
+                }
+            }
+            let digest = try FileDigest.sha256(destination, cancelled: { try runner.checkCancellation() })
+            if published {
+                guard let expected = publishedIdentity,
+                      let current = FileIdentity.of(destination),
+                      current == expected, current.isRegularFile, !current.isSymbolicLink else {
+                    throw ConversionFailure(message: "The destination changed during verification. Nothing was confirmed.")
+                }
+            }
+            // The workspace holds full card copies (baseline, round-trip and
+            // check files); it is removed on success exactly as on failure, so
+            // no card bytes linger in temporary storage either way.
+            try? FileManager.default.removeItem(at: workspace)
+            complete = true
+            progress(ConversionProgress(stage: "Save import verified", fraction: 1))
+            return Result(save: manifest.save,
+                          files: imported.files.map { ImportedFile(name: $0.name, bytes: $0.bytes, sha256: $0.sha256) },
+                          totalBytes: imported.totalBytes, cardSHA256: digest)
+        } catch let original {
+            if published {
+                do {
+                    try removeOwnedOutput(at: destination, expected: publishedIdentity)
+                } catch let cleanupError as ConversionFailure {
+                    throw ConversionFailure(message: "\(original.localizedDescription) \(cleanupError.localizedDescription)")
+                }
+            }
+            throw original
         }
-        try runner.checkCancellation()
-        let digest = try FileDigest.sha256(destination, cancelled: { try runner.checkCancellation() })
-        // The workspace holds full card copies (staged, round-trip and check
-        // files); it is removed on success exactly as on failure, so no card
-        // bytes linger in temporary storage either way.
-        try? FileManager.default.removeItem(at: workspace)
-        complete = true
-        progress(ConversionProgress(stage: "Save import verified", fraction: 1))
-        return Result(save: manifest.save,
-                      files: imported.files.map { ImportedFile(name: $0.name, bytes: $0.bytes, sha256: $0.sha256) },
-                      totalBytes: imported.totalBytes, cardSHA256: digest)
     }
 }

@@ -1,6 +1,6 @@
-# Client acceptance checklist — 1.0 RC14
+# Client acceptance checklist — 1.0 RC15
 
-This app is locally built and locally verified. It has **not** been tested on a real PS3 or on the client Macs. Use this checklist to close the remaining gaps. Do not mark an item passed until it has actually been performed and recorded against the exact artifact hash in `dist/release-manifest-1.0-RC14.json`.
+This app is locally built and locally verified. It has **not** been tested on a real PS3 or on the client Macs. Use this checklist to close the remaining gaps. Do not mark an item passed until it has actually been performed and recorded against the exact artifact hash in `dist/release-manifest-1.0-RC15.json`.
 
 ## 1. Prerequisites before you start
 
@@ -12,7 +12,7 @@ This app is locally built and locally verified. It has **not** been tested on a 
 ## 2. Run on each client Mac
 
 - [ ] Drag `PS2 Classics for Mac.app` to Applications, launch it.
-- [ ] Confirm the window opens, the sidebar shows 1.0 RC14, and no security/Gatekeeper block appears.
+- [ ] Confirm the window opens, the sidebar shows 1.0 RC15, and no security/Gatekeeper block appears.
 - [ ] Import the support folder in Setup; confirm the content ID is recognized and no mismatch warning is shown.
 - [ ] Open a saved project or add a disc; confirm inspection reports the expected game ID.
 - [ ] Add a parent-dependent CHD without its parent; confirm the disc reports the declared parent identity and refuses to build until the exact parent is chosen with **Choose parent…**. Then choose the parent and confirm the pair verifies.
