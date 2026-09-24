@@ -165,6 +165,25 @@ def check_release_records(version: str, build: str, label: str, short_version: s
     assert not stale, f"acceptance template retains an older source archive: {stale}"
 
 
+def check_release_label(plist_path: Path, label: str, where: str):
+    """The sidebar candidate label derives from this stamped key; a missing
+    or wrong value would display a stale or generic candidate."""
+    info = plistlib.loads(plist_path.read_bytes())
+    assert info.get("PS2ReleaseLabel") == label, \
+        f"{where}: PS2ReleaseLabel is {info.get('PS2ReleaseLabel')!r}, expected {label!r}"
+
+
+def check_no_hardcoded_candidate():
+    """The RC8-sidebar defect class: no Swift source may hardcode a
+    '1.0 RC<n>' display string. UI labels must derive from PS2ReleaseLabel."""
+    stale = []
+    for source in (ROOT / "Sources").rglob("*.swift"):
+        for number, line in enumerate(source.read_text().splitlines(), 1):
+            if re.search(r"1\.0 RC[0-9]+", line):
+                stale.append(f"{source.relative_to(ROOT)}:{number}")
+    assert not stale, "hardcoded candidate label in Sources (derive from PS2ReleaseLabel instead): " + ", ".join(stale)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--version", default="1.0")
@@ -231,6 +250,9 @@ def main():
     # Source bundle checks and hashes.
     check_bundle(APP, short_version, args.build, manifest, "source")
     manifest["checks"].append("source bundle version, signature, Universal slices, macOS 12 minos and resource freshness")
+    check_release_label(APP / "Contents" / "Info.plist", args.label, "source")
+    check_no_hardcoded_candidate()
+    manifest["checks"].append("stamped PS2ReleaseLabel matches this candidate and no Swift source hardcodes a candidate label")
 
     # Standalone developer tools.
     standalone = {}
@@ -257,6 +279,7 @@ def main():
         assert extracted.is_dir(), "the archive did not contain the app bundle"
         check_bundle(extracted, short_version, args.build, manifest, "extracted")
         manifest["checks"].append("extracted archive bundle version, signature, slices, minos and resource freshness")
+        check_release_label(extracted / "Contents" / "Info.plist", args.label, "extracted")
         helper_name = "ps2-convert"
         bundled_helper = extracted / "Contents" / "Helpers" / helper_name
         result = run("python3", ROOT / "scripts" / "test-backend.py", "--helper", bundled_helper, check=False)

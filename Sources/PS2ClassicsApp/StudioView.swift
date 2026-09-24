@@ -54,6 +54,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
+/// Sidebar identity derived from the same Info.plist the build script stamps
+/// from release.json (`CFBundleShortVersionString` plus `PS2ReleaseLabel`),
+/// so the displayed candidate can never freeze on an old hardcoded string.
+/// Unknown values fall back to a generic release-candidate label rather than
+/// a wrong specific one.
+enum ReleaseIdentity {
+    static func sidebarText(shortVersion: String?, label: String?) -> String {
+        let base = shortVersion?.split(separator: ".").prefix(2).joined(separator: ".")
+        let version = (base?.isEmpty == false) ? String(base!) : "1.0"
+        let tag = (label?.isEmpty == false) ? label! : "RC"
+        return "\(version) \(tag) • Release candidate\nIntel + Apple Silicon\nmacOS 12 and later"
+    }
+    static func sidebarText(bundle: Bundle = .main) -> String {
+        sidebarText(shortVersion: bundle.infoDictionary?["CFBundleShortVersionString"] as? String,
+                    label: bundle.infoDictionary?["PS2ReleaseLabel"] as? String)
+    }
+}
+
 struct StudioView: View {
     @ObservedObject private var model = StudioModel.shared
     private let pages = [("Build a package","shippingbox"),("Build queue","list.bullet.rectangle"),("Image tools","opticaldisc"),("Memory cards","externaldrive"),("Online CONFIGs","network"),("Send to PS3","arrow.up.doc"),("Setup","slider.horizontal.3")]
@@ -74,7 +92,7 @@ struct StudioView: View {
                 }
                 Spacer()
                 if model.busy { ProgressView(value:model.fraction); Text(model.stage).font(.caption).lineLimit(3) }
-                Text("1.0 RC8 • Release candidate\nIntel + Apple Silicon\nmacOS 12 and later").font(.caption).foregroundColor(.secondary)
+                Text(ReleaseIdentity.sidebarText()).font(.caption).foregroundColor(.secondary)
             }.padding(22).frame(width:195).frame(maxHeight:.infinity).background(Color(NSColor.controlBackgroundColor))
             Divider()
             Group {

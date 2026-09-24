@@ -1,3 +1,9 @@
+# Version 1.0 — release candidate 21 (RC21, build 30)
+
+- Sidebar candidate label derives from the release metadata: the RC20 app showed a hardcoded "1.0 RC8" while About/Info.plist said 1.0.0/build 29. The label now reads `CFBundleShortVersionString` plus the build-stamped `PS2ReleaseLabel` (both from release.json), degrading generically rather than wrongly when unknown. Covered by formatting/bundle unit tests and a manifest gate that asserts the stamped label and rejects any hardcoded `1.0 RC<n>` display string in Swift sources.
+
+Still a release candidate: PS3 install/launch/save/disc/audio/manual/FTP and imported-card save acceptance, client Intel Monterey and M4 runtime, physical USB behavior and Developer ID signing/notarization remain open. Deeper parent chains, older/multi-track CHD, stream resume and curated CONFIG feeds stay deferred (see DEFERRED_WORK.md for the design/evidence/rights split).
+
 # Version 1.0 — release candidate 20 (RC20, build 29)
 
 - Accuracy fix: the failure-path workspace message treated any nonempty workspace as proof of full card copies, but an interrupted staged copy can leave partial data. Full copies are now asserted only on staging evidence (staged copy plus baseline both finished); anything earlier reports conservatively that the workspace may contain private card data, with the exact path and the original failure retained. Proven by an early-cancellation regression with a deterministically locked workspace.

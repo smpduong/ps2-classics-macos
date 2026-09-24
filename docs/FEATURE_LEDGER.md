@@ -1,10 +1,16 @@
-# Feature ledger — PS2 Classics for Mac 1.0 RC20
+# Feature ledger — PS2 Classics for Mac 1.0 RC21
 
 This ledger is deliberately honest about what is **implemented and tested**,
 what is **experimental**, and what is **deferred with a concrete prerequisite**.
 A deferred optional feature is not an unresolved defect in an advertised
 capability; those deferred features remain outside the advertised scope. No placeholder or disabled
 buttons are added for work that is not done.
+
+## Implemented and tested locally (RC21 candidate identity)
+
+| Area | Change | Evidence |
+| --- | --- | --- |
+| Sidebar candidate label | Derives from stamped `PS2ReleaseLabel` + short version; generic fallback; hardcoded-label source scan in the manifest gate | `ReleaseIdentityTests`; `scripts/release-manifest.py` label checks; isolated-app visual check |
 
 ## Implemented and tested locally (RC20 evidence-conditional reporting)
 
