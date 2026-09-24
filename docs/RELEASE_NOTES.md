@@ -1,3 +1,10 @@
+# Version 1.0 — release candidate 18 (RC18, build 27)
+
+- Ownership removal narrowed to what the code can prove: the quarantine entry now lives in a fresh private 0700 directory with an unguessable name, so the old same-directory path-deletion window is gone for any actor working from known paths. macOS offers no atomic identity-conditional unlink, so the absolute "another file is never deleted" claim is narrowed to a stated residual: only a same-user actor that can write the destination directory AND targets the private name inside a microsecond window could still interfere — and such an actor can already replace the destination itself at any time. Comments, guide and ledger now state this boundary instead of the unprovable absolute.
+- Workspace cleanup made consistent: success and failure paths share one structured choke point each — a primary failure combined with a cleanup failure reports both causes with the exact leftover location, and no path attempts removal twice. Verified regressions cover quarantine-entry replacement, vanished quarantine entries, and combined failure reporting, without ever deleting a verified good output for a cleanup failure.
+
+Still a release candidate: PS3 install/launch/save/disc/audio/manual/FTP and imported-card save acceptance, client Intel Monterey and M4 runtime, physical USB behavior and Developer ID signing/notarization remain open. Deeper parent chains, older/multi-track CHD, stream resume and curated CONFIG feeds stay deferred (see DEFERRED_WORK.md for the design/evidence/rights split).
+
 # Version 1.0 — release candidate 17 (RC17, build 26)
 
 - Ownership-cleanup hole closed in save import: removing a published output now requires the identity captured right after publication — there is no identity-less fallback, and an uncapturable publication is left in place with an honest error instead of deleted blind. Deletion goes through an atomic quarantine protocol (move aside to a unique private name, verify the secured inode, only then delete), closing the check-then-delete race where a replacement landing between the check and the delete could be removed; foreign files are moved back, never deleted.

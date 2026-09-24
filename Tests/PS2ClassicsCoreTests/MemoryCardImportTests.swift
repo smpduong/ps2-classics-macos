@@ -1004,4 +1004,116 @@ final class MemoryCardImportTests: XCTestCase {
             }
         }
     }
+
+    func testQuarantineEntrySwapPreservesForeign() throws {
+        // Replaces the secured quarantine entry itself with byte-identical
+        // foreign bytes (new inode) immediately before the deletion verdict —
+        // the old path-deletion window. Only the verified owned inode may be
+        // deleted: the foreign file must survive byte-identical with no
+        // quarantine leftovers.
+        let foreign = Data("foreign-quarantine-bytes".utf8)
+        try temporary { root in
+            let destination = root.appendingPathComponent("owned.VMC")
+            try Data("original-output".utf8).write(to: destination)
+            let identity = try XCTUnwrap(FileIdentity.of(destination))
+            MemoryCardImport.testHookAfterQuarantineMove = {
+                guard let dir = (try? FileManager.default.contentsOfDirectory(atPath: root.path))?
+                    .first(where: { $0.hasPrefix(".ps2-quarantine-") }) else { return }
+                let dirURL = root.appendingPathComponent(dir)
+                guard let entry = (try? FileManager.default.contentsOfDirectory(atPath: dirURL.path))?.first else { return }
+                try? foreign.write(to: dirURL.appendingPathComponent(entry), options: .atomic)
+            }
+            defer { MemoryCardImport.testHookAfterQuarantineMove = nil }
+            try MemoryCardImport.removeOwnedOutput(at: destination, expected: identity)
+            MemoryCardImport.testHookAfterQuarantineMove = nil
+            XCTAssertEqual(try Data(contentsOf: destination), foreign)
+            let names = try FileManager.default.contentsOfDirectory(atPath: root.path)
+            XCTAssertFalse(names.contains(where: { $0.hasPrefix(".ps2-quarantine-") || $0.hasPrefix(".ps2-owned-remove-") }),
+                           "quarantine leftovers must not remain: \(names)")
+        }
+    }
+
+    func testVanishedQuarantineReportsHonestly() throws {
+        // Deletes the quarantine entry before the verdict. The error must say
+        // the file vanished — never claim a file was preserved — and nothing
+        // may be deleted.
+        try temporary { root in
+            let destination = root.appendingPathComponent("owned.VMC")
+            try Data("original-output".utf8).write(to: destination)
+            let identity = try XCTUnwrap(FileIdentity.of(destination))
+            MemoryCardImport.testHookAfterQuarantineMove = {
+                guard let dir = (try? FileManager.default.contentsOfDirectory(atPath: root.path))?
+                    .first(where: { $0.hasPrefix(".ps2-quarantine-") }) else { return }
+                try? FileManager.default.removeItem(at: root.appendingPathComponent(dir))
+            }
+            defer { MemoryCardImport.testHookAfterQuarantineMove = nil }
+            do {
+                try MemoryCardImport.removeOwnedOutput(at: destination, expected: identity)
+                XCTFail("vanished quarantine must throw")
+            } catch {
+                XCTAssertTrue(error.localizedDescription.contains("vanished"), error.localizedDescription)
+                XCTAssertFalse(error.localizedDescription.contains("preserved"), error.localizedDescription)
+            }
+            MemoryCardImport.testHookAfterQuarantineMove = nil
+            XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
+        }
+    }
+
+    func testFailurePathWorkspaceCleanupCombined() throws {
+        // Corrupts an unrelated page (forcing a pre-publication verification
+        // failure) and locks the workspace so its removal also fails. The
+        // thrown error must carry both the primary cause and the leftover
+        // workspace location; nothing may be published.
+        let cardA = Self.build(saves: [("BASLUS-12345GAMEDATA", [("icon.sys", Self.icon)]),
+                                       ("BESLES-54321EMPTY", [])])
+        let cardB = Self.build(saves: [("BESLES-99999OTHER", [("note.dat", Data("hi".utf8))])])
+        try temporary { root in
+            let urlA = try write(cardA, name: "a.VMC", in: root)
+            let urlB = try write(cardB, name: "b.VMC", in: root)
+            let exported = try exportGameData(from: urlA, in: root)
+            let destination = root.appendingPathComponent("b-failed-cleanup.VMC")
+            let tmp = FileManager.default.temporaryDirectory
+            let beforeTmp = Set((try? FileManager.default.contentsOfDirectory(atPath: tmp.path)) ?? [])
+            var workspaceURL: URL?
+            MemoryCardImport.testHookAfterWrites = { fd, geometry, size in
+                let stride = geometry.pageStride
+                let offset = (size / stride - 1) * stride
+                let handle = FileHandle(fileDescriptor: fd, closeOnDealloc: false)
+                do {
+                    try handle.seek(toOffset: offset)
+                    guard let byte = try handle.read(upToCount: 1)?.first else { return }
+                    try handle.seek(toOffset: offset)
+                    try handle.write(contentsOf: Data([byte ^ 0xFF]))
+                } catch { return }
+                let names = (try? FileManager.default.contentsOfDirectory(atPath: tmp.path)) ?? []
+                guard let fresh = names.first(where: { $0.hasPrefix(".ps2-save-import-") && !beforeTmp.contains($0) }) else { return }
+                workspaceURL = tmp.appendingPathComponent(fresh)
+                workspaceURL!.path.withCString { chflags($0, UInt32(UF_IMMUTABLE)) }
+            }
+            defer {
+                MemoryCardImport.testHookAfterWrites = nil
+                if let workspaceURL {
+                    workspaceURL.path.withCString { chflags($0, 0) }
+                    try? FileManager.default.removeItem(at: workspaceURL)
+                }
+            }
+            do {
+                _ = try MemoryCardImport.importSave(exported, card: urlB, destination: destination,
+                                                    helper: URL(fileURLWithPath: "/nonexistent"),
+                                                    runner: ConversionRunner())
+                XCTFail("combined failure must throw")
+            } catch {
+                XCTAssertTrue(error.localizedDescription.contains("unexpected page"), error.localizedDescription)
+                XCTAssertTrue(error.localizedDescription.contains("also could not be removed"), error.localizedDescription)
+                if let workspaceURL {
+                    XCTAssertTrue(error.localizedDescription.contains(workspaceURL.path), error.localizedDescription)
+                } else {
+                    XCTFail("the hook did not capture the workspace")
+                }
+            }
+            MemoryCardImport.testHookAfterWrites = nil
+            XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path),
+                           "a failed import must publish nothing")
+        }
+    }
 }

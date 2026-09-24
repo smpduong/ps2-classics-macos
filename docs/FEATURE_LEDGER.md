@@ -1,4 +1,4 @@
-# Feature ledger — PS2 Classics for Mac 1.0 RC17
+# Feature ledger — PS2 Classics for Mac 1.0 RC18
 
 This ledger is deliberately honest about what is **implemented and tested**,
 what is **experimental**, and what is **deferred with a concrete prerequisite**.
@@ -6,11 +6,18 @@ A deferred optional feature is not an unresolved defect in an advertised
 capability; those deferred features remain outside the advertised scope. No placeholder or disabled
 buttons are added for work that is not done.
 
-## Implemented and tested locally (RC17 ownership cleanup)
+## Implemented and tested locally (RC18 quarantine + cleanup consistency)
 
 | Area | Change | Evidence |
 | --- | --- | --- |
-| Owned-output removal | Required captured identity (no identity-less fallback); atomic quarantine protocol closes the check-then-delete race; foreign files restored, never deleted; uncapturable publications left in place honestly | `MemoryCardImportTests` nil-capture, quarantine-window and foreign-restore tests |
+| Quarantine guarantee | Entry moved into a private 0700 directory with an unguessable name; absolute claim narrowed to a stated same-user residual (no identity-conditional unlink on macOS); vanished entries report exactly that | `MemoryCardImportTests` entry-swap and vanished-quarantine tests |
+| Cleanup consistency | One structured choke point per outcome on both paths; combined primary+cleanup errors preserve the cause; no double attempts; good output never deleted for cleanup failure | `MemoryCardImportTests` combined-failure and immutable-workspace tests |
+
+## Implemented and tested locally (RC17 ownership cleanup, guarantee narrowed in RC18)
+
+| Area | Change | Evidence |
+| --- | --- | --- |
+| Owned-output removal | Required captured identity (no identity-less fallback); quarantine protocol with the absolute race claim narrowed to a stated residual in RC18; foreign files restored, never deleted within that model; uncapturable publications left in place honestly | `MemoryCardImportTests` nil-capture, quarantine-window and foreign-restore tests |
 | Workspace honesty | Unremovable workspace after a verified publish reports its exact location (with digest) instead of claiming removal; good output never deleted for cleanup failure | `MemoryCardImportTests` immutable-workspace test |
 | Release hygiene | Acceptance template names the exact current source archive; manifest step asserts template/artifact/manifest/version/source agreement every gate | `scripts/release-manifest.py` ledger check; RC14 stale line corrected |
 
