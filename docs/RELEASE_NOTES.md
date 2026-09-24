@@ -1,3 +1,10 @@
+# Version 1.0 — release candidate 20 (RC20, build 29)
+
+- Accuracy fix: the failure-path workspace message treated any nonempty workspace as proof of full card copies, but an interrupted staged copy can leave partial data. Full copies are now asserted only on staging evidence (staged copy plus baseline both finished); anything earlier reports conservatively that the workspace may contain private card data, with the exact path and the original failure retained. Proven by an early-cancellation regression with a deterministically locked workspace.
+- Release-readiness pass: artifact, source package, receipt, version/build, Universal slices and docs verified consistent with no PS3 or client-Mac evidence required; no code blocker found beyond this fix.
+
+Still a release candidate: PS3 install/launch/save/disc/audio/manual/FTP and imported-card save acceptance, client Intel Monterey and M4 runtime, physical USB behavior and Developer ID signing/notarization remain open. Deeper parent chains, older/multi-track CHD, stream resume and curated CONFIG feeds stay deferred (see DEFERRED_WORK.md for the design/evidence/rights split).
+
 # Version 1.0 — release candidate 19 (RC19, build 28)
 
 - Accuracy corrections to RC18: the entry-swap regression covers a pre-verdict swap, not the residual fstat-to-delete window — the narrative claiming a reproduced-and-fixed final-window race is corrected, and absolute "never deleted" phrasing is narrowed to the stated threat model throughout code, guide and ledger (no deletion-demonstrating probe added; it would read as blessing data loss).

@@ -1105,6 +1105,7 @@ final class MemoryCardImportTests: XCTestCase {
             } catch {
                 XCTAssertTrue(error.localizedDescription.contains("unexpected page"), error.localizedDescription)
                 XCTAssertTrue(error.localizedDescription.contains("also could not be removed"), error.localizedDescription)
+                XCTAssertTrue(error.localizedDescription.contains("still holds full card copies"), error.localizedDescription)
                 if let workspaceURL {
                     XCTAssertTrue(error.localizedDescription.contains(workspaceURL.path), error.localizedDescription)
                 } else {
@@ -1214,6 +1215,55 @@ final class MemoryCardImportTests: XCTestCase {
             XCTAssertFalse(stages.contains(where: { $0.hasPrefix("Save import verified:") }),
                            "no completion signal may precede a cleanup failure: \(stages)")
             XCTAssertTrue(FileManager.default.fileExists(atPath: destination.path))
+        }
+    }
+
+    func testEmptyWorkspaceCleanupReportsConservatively() throws {
+        // Cancels before any copy, with workspace removal also failing: the
+        // combined error must not claim full card copies. Nothing is published
+        // and no completion signal fires.
+        let cardA = Self.build(saves: [("BASLUS-12345GAMEDATA", [("icon.sys", Self.icon)]),
+                                       ("BESLES-54321EMPTY", [])])
+        let cardB = Self.build(saves: [("BESLES-99999OTHER", [("note.dat", Data("hi".utf8))])])
+        try temporary { root in
+            let urlA = try write(cardA, name: "a.VMC", in: root)
+            let urlB = try write(cardB, name: "b.VMC", in: root)
+            let exported = try exportGameData(from: urlA, in: root)
+            let destination = root.appendingPathComponent("b-early-cancel.VMC")
+            let runner = ConversionRunner()
+            runner.cancel()
+            var workspaceURL: URL?
+            MemoryCardImport.testHookAfterWorkspaceCreated = { workspace in
+                workspaceURL = workspace
+                workspace.path.withCString { chflags($0, UInt32(UF_IMMUTABLE)) }
+            }
+            defer {
+                MemoryCardImport.testHookAfterWorkspaceCreated = nil
+                if let workspaceURL {
+                    workspaceURL.path.withCString { chflags($0, 0) }
+                    try? FileManager.default.removeItem(at: workspaceURL)
+                }
+            }
+            do {
+                _ = try MemoryCardImport.importSave(exported, card: urlB, destination: destination,
+                                                    helper: URL(fileURLWithPath: "/nonexistent"),
+                                                    runner: runner)
+                XCTFail("early cancellation must throw")
+            } catch {
+                XCTAssertTrue(error.localizedDescription.contains("Cancelled"), error.localizedDescription)
+                XCTAssertTrue(error.localizedDescription.contains("may contain private card data"),
+                              error.localizedDescription)
+                XCTAssertFalse(error.localizedDescription.contains("still holds full card copies"),
+                               error.localizedDescription)
+                if let workspaceURL {
+                    XCTAssertTrue(error.localizedDescription.contains(workspaceURL.path), error.localizedDescription)
+                } else {
+                    XCTFail("the hook did not capture the workspace")
+                }
+            }
+            MemoryCardImport.testHookAfterWorkspaceCreated = nil
+            XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path),
+                           "a cancelled import must publish nothing")
         }
     }
 }

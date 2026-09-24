@@ -232,6 +232,10 @@ public enum MemoryCardImport {
     /// directory is removed, so a test can fail the directory removal
     /// deterministically and prove the two outcomes report separately.
     static var testHookAfterQuarantineFileDelete: ((URL) -> Void)?
+    /// Runs immediately after the private workspace directory is created, so
+    /// a test can stage a deterministic workspace-cleanup failure for a
+    /// failure path that never reaches the later hooks.
+    static var testHookAfterWorkspaceCreated: ((URL) -> Void)?
 
     /// Pages covering one allocatable (relative) cluster.
     static func pagesForRelativeCluster(_ relative: UInt64, geometry: MemoryCardSaves.Geometry) -> [UInt64] {
@@ -495,12 +499,17 @@ public enum MemoryCardImport {
         guard mkdir(workspace.path, 0o700) == 0 else {
             throw ConversionFailure(message: "Cannot create a private import workspace.")
         }
+        if let workspaceHook = testHookAfterWorkspaceCreated { workspaceHook(workspace) }
         // Workspace disposal has one structured choke point per outcome, so a
         // cleanup result can never contradict a reported state. The body runs
         // in an immediately-executed throwing closure (surrounding indentation
         // kept): the catch combines a primary failure with a cleanup failure
         // while preserving the cause, and success disposal is explicit after
         // it. Neither path attempts removal twice.
+        // `stagedComplete` records the one fact the failure message may
+        // assert: only after the staged copy and its baseline both finish is
+        // a full card copy evidenced. Anything earlier may hold partial data.
+        var stagedComplete = false
         let result: Result
         do {
             result = try {
@@ -552,6 +561,7 @@ public enum MemoryCardImport {
         } catch {
             throw ConversionFailure(message: "Cannot stage the import baseline. Free space first.")
         }
+        stagedComplete = true
         // 3. Baseline inventory of the copy (identical bytes to the source).
         let geometry = try S.readGeometry(fd: fd, size: size)
         // ECC is defined per 512-byte page data area; other geometries stay
@@ -895,16 +905,15 @@ public enum MemoryCardImport {
                       totalBytes: imported.totalBytes, cardSHA256: digest)
             }()
         } catch let primary {
-            // A workspace that was never populated (early cancellation before
-            // any copy) must not be reported as holding full copies: describe
-            // what the evidence shows.
+            // Report only what the evidence shows: a workspace that never
+            // reached staging may hold partial data, never proven full copies.
             if FileManager.default.fileExists(atPath: workspace.path) {
-                let holdsCopies = !((try? FileManager.default.contentsOfDirectory(atPath: workspace.path)) ?? []).isEmpty
+                let holdsFullCopies = stagedComplete && !((try? FileManager.default.contentsOfDirectory(atPath: workspace.path)) ?? []).isEmpty
                 do {
                     try FileManager.default.removeItem(at: workspace)
                 } catch {
-                    let contents = holdsCopies ? "and still holds full card copies"
-                        : "and may hold partial copies"
+                    let contents = holdsFullCopies ? "and still holds full card copies"
+                        : "and may contain private card data"
                     throw ConversionFailure(message: "\(primary.localizedDescription) The private workspace at \(workspace.path) also could not be removed \(contents). Remove it manually.")
                 }
             }

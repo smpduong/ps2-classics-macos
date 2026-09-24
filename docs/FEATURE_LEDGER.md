@@ -1,10 +1,17 @@
-# Feature ledger — PS2 Classics for Mac 1.0 RC19
+# Feature ledger — PS2 Classics for Mac 1.0 RC20
 
 This ledger is deliberately honest about what is **implemented and tested**,
 what is **experimental**, and what is **deferred with a concrete prerequisite**.
 A deferred optional feature is not an unresolved defect in an advertised
 capability; those deferred features remain outside the advertised scope. No placeholder or disabled
 buttons are added for work that is not done.
+
+## Implemented and tested locally (RC20 evidence-conditional reporting)
+
+| Area | Change | Evidence |
+| --- | --- | --- |
+| Workspace message accuracy | Full copies asserted only on staging evidence; earlier failures report conservatively with path and cause retained | `MemoryCardImportTests` early-cancellation and combined-failure tests |
+| Release readiness | Artifact, source, receipt, version/build, slices and docs verified consistent without new features | Strict gate receipt |
 
 ## Implemented and tested locally (RC19 accuracy and behavior)
 
