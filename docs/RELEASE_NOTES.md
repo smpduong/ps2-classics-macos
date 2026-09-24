@@ -1,3 +1,10 @@
+# Version 1.0 — release candidate 19 (RC19, build 28)
+
+- Accuracy corrections to RC18: the entry-swap regression covers a pre-verdict swap, not the residual fstat-to-delete window — the narrative claiming a reproduced-and-fixed final-window race is corrected, and absolute "never deleted" phrasing is narrowed to the stated threat model throughout code, guide and ledger (no deletion-demonstrating probe added; it would read as blessing data loss).
+- Behavior fixes: the success-path workspace error names the real destination path alongside the verified digest (it previously named the save); the final verified progress signal fires only after cleanup succeeds; quarantine-directory removal failure reports separately from quarantined-file removal failure; the failure-path workspace message is conditional on evidence instead of always claiming full copies.
+
+Still a release candidate: PS3 install/launch/save/disc/audio/manual/FTP and imported-card save acceptance, client Intel Monterey and M4 runtime, physical USB behavior and Developer ID signing/notarization remain open. Deeper parent chains, older/multi-track CHD, stream resume and curated CONFIG feeds stay deferred (see DEFERRED_WORK.md for the design/evidence/rights split).
+
 # Version 1.0 — release candidate 18 (RC18, build 27)
 
 - Ownership removal narrowed to what the code can prove: the quarantine entry now lives in a fresh private 0700 directory with an unguessable name, so the old same-directory path-deletion window is gone for any actor working from known paths. macOS offers no atomic identity-conditional unlink, so the absolute "another file is never deleted" claim is narrowed to a stated residual: only a same-user actor that can write the destination directory AND targets the private name inside a microsecond window could still interfere — and such an actor can already replace the destination itself at any time. Comments, guide and ledger now state this boundary instead of the unprovable absolute.

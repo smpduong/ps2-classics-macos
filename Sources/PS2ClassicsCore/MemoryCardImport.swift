@@ -228,6 +228,10 @@ public enum MemoryCardImport {
     /// before the quarantined identity is verified, so a test can plant a
     /// replacement at the destination inside the old check-then-delete window.
     static var testHookAfterQuarantineMove: (() -> Void)?
+    /// Runs after the quarantined file is deleted but before its now-empty
+    /// directory is removed, so a test can fail the directory removal
+    /// deterministically and prove the two outcomes report separately.
+    static var testHookAfterQuarantineFileDelete: ((URL) -> Void)?
 
     /// Pages covering one allocatable (relative) cluster.
     static func pagesForRelativeCluster(_ relative: UInt64, geometry: MemoryCardSaves.Geometry) -> [UInt64] {
@@ -299,8 +303,9 @@ public enum MemoryCardImport {
     /// directory. The destination is moved atomically into a fresh 0700
     /// directory with an unguessable name on the same filesystem; only the
     /// secured inode, verified through an open file description against
-    /// `expected`, is ever deleted. A file this operation did not publish is
-    /// moved back to the destination, never deleted.
+    /// `expected`, is ever the deletion target. A file this operation did not
+    /// publish is moved back to the destination rather than deleted — both
+    /// within the residual stated below, not as an absolute guarantee.
     ///
     /// Threat model (same-user concurrent mutation): the single-operation slot
     /// excludes this process from racing itself, and unguessable private names
@@ -358,9 +363,14 @@ public enum MemoryCardImport {
         }
         do {
             try FileManager.default.removeItem(at: quarantine)
-            try FileManager.default.removeItem(at: quarantineDir)
         } catch {
             throw ConversionFailure(message: "The import failed after publication, and the unverified output secured in \(quarantineDir.lastPathComponent) could not be removed. Remove it manually after checking it.")
+        }
+        if let deleteHook = testHookAfterQuarantineFileDelete { deleteHook(quarantineDir) }
+        do {
+            try FileManager.default.removeItem(at: quarantineDir)
+        } catch {
+            throw ConversionFailure(message: "The unverified output was removed, but the now-empty quarantine directory \(quarantineDir.lastPathComponent) could not be removed. Remove the empty folder manually.")
         }
     }
 
@@ -880,16 +890,23 @@ public enum MemoryCardImport {
             }
             throw original
         }
-        progress(ConversionProgress(stage: "Save import verified", fraction: 1))
         return Result(save: manifest.save,
                       files: imported.files.map { ImportedFile(name: $0.name, bytes: $0.bytes, sha256: $0.sha256) },
                       totalBytes: imported.totalBytes, cardSHA256: digest)
             }()
         } catch let primary {
-            do {
-                try FileManager.default.removeItem(at: workspace)
-            } catch {
-                throw ConversionFailure(message: "\(primary.localizedDescription) The private workspace at \(workspace.path) also could not be removed and still holds full card copies. Remove it manually.")
+            // A workspace that was never populated (early cancellation before
+            // any copy) must not be reported as holding full copies: describe
+            // what the evidence shows.
+            if FileManager.default.fileExists(atPath: workspace.path) {
+                let holdsCopies = !((try? FileManager.default.contentsOfDirectory(atPath: workspace.path)) ?? []).isEmpty
+                do {
+                    try FileManager.default.removeItem(at: workspace)
+                } catch {
+                    let contents = holdsCopies ? "and still holds full card copies"
+                        : "and may hold partial copies"
+                    throw ConversionFailure(message: "\(primary.localizedDescription) The private workspace at \(workspace.path) also could not be removed \(contents). Remove it manually.")
+                }
             }
             throw primary
         }
@@ -897,12 +914,15 @@ public enum MemoryCardImport {
         // cleanup runs outside output-ownership handling: its failure must
         // never delete the good output. A leftover workspace still holds full
         // card copies, so failure is reported with its exact location instead
-        // of claiming removal.
+        // of claiming removal. The final verified signal fires only after
+        // cleanup succeeds, so the UI can never show completion first and
+        // fail cleanup second.
         do {
             try FileManager.default.removeItem(at: workspace)
         } catch {
-            throw ConversionFailure(message: "Save import verified and published to \(result.save) (card SHA-256 \(result.cardSHA256)), but the private workspace at \(workspace.path) could not be removed and still holds full card copies. Remove it manually.")
+            throw ConversionFailure(message: "Save import verified and published to \(destination.path) (card SHA-256 \(result.cardSHA256)), but the private workspace at \(workspace.path) could not be removed and still holds full card copies. Remove it manually.")
         }
+        progress(ConversionProgress(stage: "Save import verified", fraction: 1))
         return result
     }
 }

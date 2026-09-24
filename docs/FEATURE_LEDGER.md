@@ -1,10 +1,17 @@
-# Feature ledger — PS2 Classics for Mac 1.0 RC18
+# Feature ledger — PS2 Classics for Mac 1.0 RC19
 
 This ledger is deliberately honest about what is **implemented and tested**,
 what is **experimental**, and what is **deferred with a concrete prerequisite**.
 A deferred optional feature is not an unresolved defect in an advertised
 capability; those deferred features remain outside the advertised scope. No placeholder or disabled
 buttons are added for work that is not done.
+
+## Implemented and tested locally (RC19 accuracy and behavior)
+
+| Area | Change | Evidence |
+| --- | --- | --- |
+| Validation narrative | Entry-swap test covers the pre-verdict swap, not the residual fstat-to-delete window; absolute phrases narrowed to the stated threat model | This section; `MemoryCardImportTests` entry-swap scope comment |
+| User-facing accuracy | Workspace errors name the real destination path; verified signal fires only after cleanup; quarantine-directory outcome separated; failure workspace message conditional on evidence | `MemoryCardImportTests` callback-ordering and outcome-separation tests |
 
 ## Implemented and tested locally (RC18 quarantine + cleanup consistency)
 
@@ -33,7 +40,7 @@ buttons are added for work that is not done.
 | Area | Change | Evidence |
 | --- | --- | --- |
 | Surgical import diff | Final bytes compared against an immutable pre-write baseline (both raw and decrypted inputs) in bounded cancellable chunks; allowed pages derived from the planned allocation and metadata changes, never from what writes happened to touch; unrelated-page corruption refused | `MemoryCardImportTests` pre-write-baseline corruption test on the real import path |
-| Post-publication cleanup (.VMC and .VME) | Cancellation or read failure during final hashing after exclusive rename/encryption removes only the proven-owned output (device+inode match, regular non-symlink); a concurrently replaced file is never deleted; removal failures are honest in the thrown error | `MemoryCardImportTests` post-publication cancellation tests for both extensions plus concurrent-replacement protection |
+| Post-publication cleanup (.VMC and .VME) | Cancellation or read failure during final hashing after exclusive rename/encryption removes only the proven-owned output (device+inode match, regular non-symlink); files it did not publish are restored rather than deleted within the residual stated in RC18; removal failures are honest in the thrown error | `MemoryCardImportTests` post-publication cancellation tests for both extensions plus concurrent-replacement protection |
 | Published-card verification | Decrypted published output compared byte-for-byte with the verified raw card (bounded cancellable comparator, strict length/read handling) in addition to the imported-save hash check; unrelated alterations refused and the owned output removed | `MemoryCardImportTests` free-page tampering test with matching imported-save hashes |
 | RC14 record correction | The RC14 round-trip fix replaced two failable whole-file reads (`nil == nil` pass) with a streaming comparison; the RC14 published-file check compared only the imported save's hashes (unrelated alterations could escape) — now completed above | Commit history and `testPublishedVerificationRemovesUnverifiedOutput` plus the new full-byte test |
 

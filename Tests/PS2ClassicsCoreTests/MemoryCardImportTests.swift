@@ -1007,10 +1007,11 @@ final class MemoryCardImportTests: XCTestCase {
 
     func testQuarantineEntrySwapPreservesForeign() throws {
         // Replaces the secured quarantine entry itself with byte-identical
-        // foreign bytes (new inode) immediately before the deletion verdict —
-        // the old path-deletion window. Only the verified owned inode may be
-        // deleted: the foreign file must survive byte-identical with no
-        // quarantine leftovers.
+        // foreign bytes (new inode) at the pre-verdict hook point — before
+        // open/fstat, not inside the residual fstat-to-delete window, which
+        // no deterministic hook can target and which the threat model states
+        // rather than tests. The foreign file must survive byte-identical
+        // with no quarantine leftovers.
         let foreign = Data("foreign-quarantine-bytes".utf8)
         try temporary { root in
             let destination = root.appendingPathComponent("owned.VMC")
@@ -1059,8 +1060,7 @@ final class MemoryCardImportTests: XCTestCase {
         }
     }
 
-    func testFailurePathWorkspaceCleanupCombined() throws {
-        // Corrupts an unrelated page (forcing a pre-publication verification
+    func testFailurePathWorkspaceCleanupCombined() throws {        // Corrupts an unrelated page (forcing a pre-publication verification
         // failure) and locks the workspace so its removal also fails. The
         // thrown error must carry both the primary cause and the leftover
         // workspace location; nothing may be published.
@@ -1114,6 +1114,106 @@ final class MemoryCardImportTests: XCTestCase {
             MemoryCardImport.testHookAfterWrites = nil
             XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path),
                            "a failed import must publish nothing")
+        }
+    }
+
+    func testQuarantineDirectoryOutcomeSeparated() throws {
+        // Fails the removal of the now-empty quarantine directory while the
+        // quarantined file deletion succeeds. The error must report the empty
+        // directory that remains — never claim the unverified output survived.
+        try temporary { root in
+            let destination = root.appendingPathComponent("owned.VMC")
+            try Data("original-output".utf8).write(to: destination)
+            let identity = try XCTUnwrap(FileIdentity.of(destination))
+            var quarantineDirURL: URL?
+            MemoryCardImport.testHookAfterQuarantineFileDelete = { dir in
+                quarantineDirURL = dir
+                dir.path.withCString { chflags($0, UInt32(UF_IMMUTABLE)) }
+            }
+            defer {
+                MemoryCardImport.testHookAfterQuarantineFileDelete = nil
+                if let quarantineDirURL {
+                    quarantineDirURL.path.withCString { chflags($0, 0) }
+                    try? FileManager.default.removeItem(at: quarantineDirURL)
+                }
+            }
+            do {
+                try MemoryCardImport.removeOwnedOutput(at: destination, expected: identity)
+                XCTFail("empty-directory removal failure must throw")
+            } catch {
+                XCTAssertTrue(error.localizedDescription.contains("now-empty quarantine directory"),
+                              error.localizedDescription)
+                if let quarantineDirURL {
+                    XCTAssertTrue(error.localizedDescription.contains(quarantineDirURL.lastPathComponent),
+                                  error.localizedDescription)
+                } else {
+                    XCTFail("the hook did not capture the quarantine directory")
+                }
+            }
+            MemoryCardImport.testHookAfterQuarantineFileDelete = nil
+            // The verified output is gone; only its empty directory remains.
+            XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
+            if let quarantineDirURL {
+                var isDir: ObjCBool = false
+                XCTAssertTrue(FileManager.default.fileExists(atPath: quarantineDirURL.path, isDirectory: &isDir) && isDir.boolValue)
+                XCTAssertTrue((try? FileManager.default.contentsOfDirectory(atPath: quarantineDirURL.path))?.isEmpty ?? false)
+            }
+        }
+    }
+
+    func testVerifiedSignalWaitsForCleanup() throws {
+        // The final verified progress signal must fire only after workspace
+        // cleanup succeeds. On cleanup failure no completion signal fires at
+        // all — the thrown error is the signal — so the UI can never show
+        // completion first and fail cleanup second.
+        let cardA = Self.build(saves: [("BASLUS-12345GAMEDATA", [("icon.sys", Self.icon)]),
+                                       ("BESLES-54321EMPTY", [])])
+        let cardB = Self.build(saves: [("BESLES-99999OTHER", [("note.dat", Data("hi".utf8))])])
+        // Success case: the verified signal fires exactly once, last.
+        try temporary { root in
+            let urlA = try write(cardA, name: "a.VMC", in: root)
+            let urlB = try write(cardB, name: "b.VMC", in: root)
+            let exported = try exportGameData(from: urlA, in: root)
+            let destination = root.appendingPathComponent("b-signalled.VMC")
+            var stages = [String]()
+            _ = try MemoryCardImport.importSave(exported, card: urlB, destination: destination,
+                                                helper: URL(fileURLWithPath: "/nonexistent"),
+                                                runner: ConversionRunner(),
+                                                progress: { stages.append("\($0.stage):\($0.fraction)") })
+            XCTAssertEqual(stages.last, "Save import verified:1.0")
+            XCTAssertEqual(stages.filter({ $0.hasPrefix("Save import verified:") }).count, 1)
+        }
+        // Cleanup-failure case: no verified signal fires.
+        try temporary { root in
+            let urlA = try write(cardA, name: "a.VMC", in: root)
+            let urlB = try write(cardB, name: "b.VMC", in: root)
+            let exported = try exportGameData(from: urlA, in: root)
+            let destination = root.appendingPathComponent("b-unsignalled.VMC")
+            let tmp = FileManager.default.temporaryDirectory
+            let beforeTmp = Set((try? FileManager.default.contentsOfDirectory(atPath: tmp.path)) ?? [])
+            var workspaceURL: URL?
+            MemoryCardImport.testHookAfterPublish = {
+                let names = (try? FileManager.default.contentsOfDirectory(atPath: tmp.path)) ?? []
+                guard let fresh = names.first(where: { $0.hasPrefix(".ps2-save-import-") && !beforeTmp.contains($0) }) else { return }
+                workspaceURL = tmp.appendingPathComponent(fresh)
+                workspaceURL!.path.withCString { chflags($0, UInt32(UF_IMMUTABLE)) }
+            }
+            defer {
+                MemoryCardImport.testHookAfterPublish = nil
+                if let workspaceURL {
+                    workspaceURL.path.withCString { chflags($0, 0) }
+                    try? FileManager.default.removeItem(at: workspaceURL)
+                }
+            }
+            var stages = [String]()
+            XCTAssertThrowsError(try MemoryCardImport.importSave(exported, card: urlB, destination: destination,
+                                                                 helper: URL(fileURLWithPath: "/nonexistent"),
+                                                                 runner: ConversionRunner(),
+                                                                 progress: { stages.append("\($0.stage):\($0.fraction)") }))
+            MemoryCardImport.testHookAfterPublish = nil
+            XCTAssertFalse(stages.contains(where: { $0.hasPrefix("Save import verified:") }),
+                           "no completion signal may precede a cleanup failure: \(stages)")
+            XCTAssertTrue(FileManager.default.fileExists(atPath: destination.path))
         }
     }
 }
