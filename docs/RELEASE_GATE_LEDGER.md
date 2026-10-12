@@ -5,10 +5,10 @@ remains **open** for a final 1.0. It is deliberately explicit: a passing local
 suite is not evidence of console or client-hardware behaviour, and this build is
 therefore labelled a **1.0 release candidate**.
 
-Artifact under evaluation: `dist/PS2 Classics for Mac 1.0 RC22.zip`
-(`CFBundleShortVersionString` 1.0.0, `CFBundleVersion` 31, Universal
+Artifact under evaluation: `dist/PS2 Classics for Mac 1.0 RC24.zip`
+(`CFBundleShortVersionString` 1.0.0, `CFBundleVersion` 33, Universal
 `arm64` + `x86_64`, minimum macOS 12.0). Exact hashes are recorded in
-`dist/release-manifest-1.0-RC22.json` and `docs/VALIDATION.md`. RC21 build 30, RC20 build 29, RC19 build 28, RC18 build 27, RC17 build 26, RC16 build 25, RC15 build 24, RC14 build 23, RC13 build 22, RC12 build 21, RC11 build 20, RC10 build 19, RC9 build 18, RC8 build 17, RC7 build 16, RC6 build 15, RC5 build 14, RC4 build 13, RC3 build 12,
+`dist/release-manifest-1.0-RC24.json` and `docs/VALIDATION.md`. RC23 build 32, RC22 build 31, RC21 build 30, RC20 build 29, RC19 build 28, RC18 build 27, RC17 build 26, RC16 build 25, RC15 build 24, RC14 build 23, RC13 build 22, RC12 build 21, RC11 build 20, RC10 build 19, RC9 build 18, RC8 build 17, RC7 build 16, RC6 build 15, RC5 build 14, RC4 build 13, RC3 build 12,
 RC2 build 11, RC1 build 10 and all earlier archives are preserved.
 
 ## Gate history
@@ -46,6 +46,7 @@ RC2 build 11, RC1 build 10 and all earlier archives are preserved.
 | Bundle/archive/resource agreement | Closed | `scripts/release-manifest.py` on the extracted archive |
 | Licensing/source reproducibility | Closed locally (RC7) | Approved GPL-3.0-only, vendor notices and complete audio sources; strict extracted-source rebuild |
 | Card backups/manual packaging/FTP protocol | Closed locally (RC8) | Card integrity/restore/cancel tests; independently decoded manual pages from single/multi packages; local FTP success/failure/corruption tests. Hardware acceptance remains open |
+| Super Slim / HEN serial batch export | RC23 feature; RC24 hardening (local gate closed) | RC23 has 31 new tests (18 exporter + 10 session + 3 ROM), not 30; its cancellation evidence was pre-cancel only, and CONFIG-during-conversion was not established. RC23 full real synthetic conversion receipt remains valid. RC24 binds full ISO SHA-256 to reviewed preflight, checks it before conversion, verifies CONFIG after conversion, rejects key symlinks, locks damaged queues against overwrite, excludes published rows from preflight and fixes cancellation/retry ownership. Four-ROM RC24 read-only preflight receipt passed; strict gate passed 16/16; full real four-ROM conversion not repeated in RC24. Console acceptance remains open |
 | Opt-in CONFIG catalog import | Implemented and tested locally (RC8); offline cache and receipts added (RC9) | Bounded schema/process tests and size/hash-verified local receipts; cached-copy review/download/forget tests; no default third-party feed claimed |
 | Individual-save browse/export | Implemented and tested locally (RC9) | Bounded parser, synthetic small/full-size/encrypted fixtures, damage/cancellation/export regressions; cards never modified. Real-card and console save acceptance remain open |
 | Single-level parent-CHD import | Implemented and tested locally (RC10) | Explicit parent selection with identity/depth/same-file checks through import, projects, queue, fingerprints, cache and recovery; reference byte-parity and parent-CHD package. Deeper chains, older/multi-track variants remain deferred |
@@ -86,6 +87,16 @@ local development alone, and none is waived.
    encoded manual display/navigation, FTP transfer/install, ATRAC3 playback,
    and imported-card saves (that an imported copy loads and still saves). Owner:
    product owner + test console.
+7. **HEN Super Slim acceptance of the Super Slim / HEN batch export.** Needed on
+   a HEN console: copy a generated `.BIN.ENC` and its optional plain CONFIG to
+   `/dev_hdd0/PS2ISO` by the user's chosen method, confirm webMAN MOD lists it,
+   that the PS2 Classics Launcher starts it, and that the game behaves as
+   expected. Also confirm whether the optional `dev_hdd0/PS2ISO` folder layout
+   the app produces is recognised as-is, or whether files must be flattened.
+   Whether the images work at all on HEN has not been established locally: all
+   local runs used a synthetic 16-byte klicensee and a matching content ID that
+   no console has. This does not establish multi-disc support. Owner: product
+   owner + HEN test console.
 Public-license and corresponding-source decisions are **closed locally in RC7**: the owner approved GPL-3.0-only; vendor grants and nested sources/notices are preserved, with exact source archives rebuilt during the strict gate. Distribute the matching source with the binary. This is no longer an external approval gate.
 
 ## How to close the external gates
@@ -96,15 +107,15 @@ passes on this artifact, it may be promoted from release candidate to 1.0 with
 no code change; otherwise the artifact stays a candidate and the findings feed
 the next build.
 
-## Acceptance results template (RC22)
+## Acceptance results template (RC24)
 
 Copy this into a new record and fill it in on the actual hardware. Every row is
 performed on **this exact artifact**:
 
 ```
-Artifact: dist/PS2 Classics for Mac 1.0 RC22.zip
-SHA-256: copy archiveSHA256 from dist/release-manifest-1.0-RC22.json
-Version/build: 1.0.0 / 31
+Artifact: dist/PS2 Classics for Mac 1.0 RC24.zip
+SHA-256: copy archiveSHA256 from dist/release-manifest-1.0-RC24.json
+Version/build: 1.0.0 / 33
 
 [ ] PS3 install        result:            title/disc/CID used:
 [ ] PS3 launch         result:            observed:
@@ -112,6 +123,9 @@ Version/build: 1.0.0 / 31
 [ ] PS3 save/load      result:            observed:
 [ ] Xenosaga II disc 1 -> 2   result:      observed:
 [ ] Xenosaga II disc 2 -> 1   result:      observed:
+[ ] HEN: webMAN MOD lists the .BIN.ENC  result:   webMAN version:
+[ ] HEN: PS2 Classics Launcher starts it  result:  observed:
+[ ] HEN: nested dev_hdd0/PS2ISO folder recognised as-is?  result:
 [ ] Intel MacBook Air (2017) runtime   OS/build:            result:
 [ ] M4 Mac mini runtime                OS/build:            result:
 [ ] Standalone launch (no dev tools)   result:
@@ -120,7 +134,7 @@ Version/build: 1.0.0 / 31
 [ ] Developer ID signing               result:
 [ ] Notarization                       result:
 [x] Owner licence decision             LICENSE and LICENSING.md
-[x] Corresponding-source package       dist/source-baseline-1.0-RC22.tar.gz
+[x] Corresponding-source package       dist/source-baseline-1.0-RC24.tar.gz
 [ ] PS3 manual display/navigation      result:
 [ ] PS3 FTP transfer/install           server/folder/result:
 [ ] PS3 imported-card save loads/saves result:
@@ -129,4 +143,4 @@ Version/build: 1.0.0 / 31
 Signature integrity checked locally is **not** Developer ID/notarization
 acceptance; cross-compilation is **not** runtime acceptance.
 
-Record all client acceptance against the RC22 manifest hash; earlier candidate hashes do not identify this build.
+Record all client acceptance against the RC24 manifest hash; earlier candidate hashes do not identify this build.

@@ -342,6 +342,7 @@ public final class ConversionRunner: @unchecked Sendable {
             if buffer.count > 8192 { buffer.removeAll() }
         }
         task.waitUntilExit()
+        try checkCancellation()
         guard task.terminationStatus == 0, (!requiresCompletion || completed) else {
             throw ConversionFailure(message: messages.isEmpty ? "Conversion stopped before a verified output was published." : messages.joined(separator: "\n"))
         }

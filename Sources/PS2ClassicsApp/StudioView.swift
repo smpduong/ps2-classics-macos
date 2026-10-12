@@ -41,9 +41,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         let model = StudioModel.shared; model.persist()
         guard model.working else { return .terminateNow }
-        let alert = NSAlert(); alert.messageText = "A package is still building"
-        alert.informativeText = "Keep the app open to finish, or cancel the current build and quit. Your queue will be saved."
-        alert.addButton(withTitle:"Keep open"); alert.addButton(withTitle:"Cancel build and quit")
+        let alert = NSAlert(); alert.messageText = "An operation is still running"
+        alert.informativeText = "Keep the app open to finish, or cancel the current operation and quit. Your queue will be saved."
+        alert.addButton(withTitle:"Keep open"); alert.addButton(withTitle:"Cancel operation and quit")
         guard alert.runModal() == .alertSecondButtonReturn else { return .terminateCancel }
         model.cancel()
         Task { @MainActor in
@@ -74,7 +74,7 @@ enum ReleaseIdentity {
 
 struct StudioView: View {
     @ObservedObject private var model = StudioModel.shared
-    private let pages = [("Build a package","shippingbox"),("Build queue","list.bullet.rectangle"),("Image tools","opticaldisc"),("Memory cards","externaldrive"),("Online CONFIGs","network"),("Send to PS3","arrow.up.doc"),("Setup","slider.horizontal.3")]
+    private let pages = [("Build a package","shippingbox"),("Build queue","list.bullet.rectangle"),("Image tools","opticaldisc"),("Memory cards","externaldrive"),("Super Slim / HEN","opticaldisc.fill"),("Online CONFIGs","network"),("Send to PS3","arrow.up.doc"),("Setup","slider.horizontal.3")]
     var body: some View {
         HStack(spacing:0) {
             VStack(alignment:.leading,spacing:22) {
@@ -100,6 +100,7 @@ struct StudioView: View {
                 case "Build queue": QueueView(model:model)
                 case "Image tools": ImageWorkspaceView()
                 case "Memory cards": CardView()
+                case "Super Slim / HEN": HENBatchView()
                 case "Online CONFIGs": OnlineConfigView()
                 case "Send to PS3": ConsoleTransferView()
                 case "Setup": SetupView(model:model)

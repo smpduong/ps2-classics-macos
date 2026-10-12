@@ -1,6 +1,6 @@
-# Client acceptance checklist — 1.0 RC22
+# Client acceptance checklist — 1.0 RC24 (build 33)
 
-This app is locally built and locally verified. It has **not** been tested on a real PS3 or on the client Macs. Use this checklist to close the remaining gaps. Do not mark an item passed until it has actually been performed and recorded against the exact artifact hash in `dist/release-manifest-1.0-RC22.json`.
+RC24 is a release candidate. Its four-ROM read-only preflight receipt passed; the RC24 strict gate passed 16 checks, while full four-ROM conversion was not repeated in RC24. It has **not** been tested on a real PS3 or on the client Macs. Use this checklist to close the remaining gaps. Do not mark an item passed until it has actually been performed and recorded against the exact artifact hash in `dist/release-manifest-1.0-RC24.json`.
 
 ## 1. Prerequisites before you start
 
@@ -12,7 +12,7 @@ This app is locally built and locally verified. It has **not** been tested on a 
 ## 2. Run on each client Mac
 
 - [ ] Drag `PS2 Classics for Mac.app` to Applications, launch it.
-- [ ] Confirm the window opens, the sidebar shows 1.0 RC22, and no security/Gatekeeper block appears.
+- [ ] Confirm the window opens, the sidebar shows 1.0 RC24, and no security/Gatekeeper block appears.
 - [ ] Import the support folder in Setup; confirm the content ID is recognized and no mismatch warning is shown.
 - [ ] Open a saved project or add a disc; confirm inspection reports the expected game ID.
 - [ ] Add a parent-dependent CHD without its parent; confirm the disc reports the declared parent identity and refuses to build until the exact parent is chosen with **Choose parent…**. Then choose the parent and confirm the pair verifies.
@@ -22,6 +22,18 @@ This app is locally built and locally verified. It has **not** been tested on a 
 - [ ] Convert a short WAV/MP3 sample with **Convert audio to AT3…**; confirm cancellation works and no partial file remains.
 - [ ] Build one small package to a local destination; confirm it completes as *Locally verified*.
 - [ ] Record OS version, time to build, and observed memory for the build.
+
+## 2a. Super Slim / HEN batch export (needs a HEN Super Slim console)
+
+These cannot be closed on a Mac. The local runs used a synthetic 16-byte klicensee and a matching content ID that no console has, so they prove conversion and publication only.
+
+- [ ] On the HEN console, copy one generated `.BIN.ENC` and its optional plain `.CONFIG` to `/dev_hdd0/PS2ISO` by your chosen method (USB, FTP, or manual copy).
+- [ ] Confirm webMAN MOD lists the game in its PS2ISO category.
+- [ ] Confirm the PS2 Classics Launcher starts it and the game plays as expected.
+- [ ] Repeat with the **Nest folders for the console path** option on. Confirm whether webMAN MOD recognises the produced `dev_hdd0/PS2ISO/<Game>/` folder as-is, or whether each game's files must be copied into `/dev_hdd0/PS2ISO` directly (flattened). Record which is required.
+- [ ] Confirm a selected CONFIG is picked up on the console, and record whether it changes anything observable.
+- [ ] Record the exact webMAN MOD version and the console's firmware/HEN version alongside the result.
+- [ ] Do **not** assume multi-disc support: these are separate standalone images. Xenosaga II's two discs remain unproven as a switchable pair.
 
 ## 3. Real hardware acceptance on the PS3
 

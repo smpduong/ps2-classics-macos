@@ -1,0 +1,208 @@
+name: macOS development preview
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-development-preview-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  preview:
+    name: Swift tests and Universal preview
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - name: Check out the selected source commit
+        uses: actions/checkout@v7.0.1
+
+      - name: Record build environment
+        run: |
+          sw_vers
+          xcodebuild -version
+          swift --version
+          python3 --version
+          cmake --version
+
+      - name: Build the Universal macOS preview
+        run: bash scripts/build-app.sh
+
+      - name: Run Swift tests with the bundled ATRAC3 helper
+        env:
+          PS2_TEST_AT3_HELPER: ${{ github.workspace }}/dist/ps2-at3
+        run: swift test
+
+      - name: Run synthetic native-helper regressions
+        run: |
+          python3 scripts/test-backend.py --helper dist/ps2-convert
+          python3 scripts/test-extra-formats.py --helper dist/ps2-convert
+          python3 scripts/test-package-workflow.py \
+            --builder dist/ps2-build \
+            --helper dist/ps2-convert \
+            --report "$RUNNER_TEMP/package-workflow.json"
+
+      - name: Assemble preview, matching source, and manifest
+        env:
+          BUILD_RUNNER: macos-15
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          short_sha="${GITHUB_SHA:0:7}"
+          app="dist/PS2 Classics for Mac.app"
+          python3 - "$app/Contents/Info.plist" "$short_sha" <<'PY'
+          import plistlib
+          import sys
+          from pathlib import Path
+
+          path = Path(sys.argv[1])
+          info = plistlib.loads(path.read_bytes())
+          info["CFBundleDisplayName"] = f"PS2 Classics for Mac Development Preview ({sys.argv[2]})"
+          path.write_bytes(plistlib.dumps(info))
+          PY
+          codesign --force --sign - "$app"
+          codesign --verify --deep --strict "$app"
+          ditto -c -k --sequesterRsrc --keepParent \
+            "$app" \
+            "artifacts/PS2-Classics-for-Mac-development-preview-${short_sha}.zip"
+          git archive --format=tar --prefix=ps2-classics-macos/ "$GITHUB_SHA" \
+            | gzip -n > artifacts/ps2-classics-macos-source.tar.gz
+          python3 - <<'PY'
+          import hashlib
+          import json
+          import os
+          import plistlib
+          import subprocess
+          import tarfile
+          from datetime import datetime, timezone
+          from pathlib import Path, PurePosixPath
+
+          root = Path.cwd()
+          artifacts = root / "artifacts"
+          source_archive = artifacts / "ps2-classics-macos-source.tar.gz"
+          preview_zip = next(artifacts.glob("PS2-Classics-for-Mac-development-preview-*.zip"))
+          prefix = "ps2-classics-macos/"
+          required = (
+              ".github/workflows/development-preview.yml",
+              "docs/WINDOWS_DEVELOPMENT_HANDOFF.md",
+              ".gitattributes",
+          )
+          with tarfile.open(source_archive, "r:gz") as archive:
+              members = {member.name: member for member in archive.getmembers()}
+              for relative in required:
+                  archived = members.get(prefix + relative)
+                  if archived is None or not archived.isfile():
+                      raise SystemExit(f"Source archive is missing {relative}")
+                  if archive.extractfile(archived).read() != (root / relative).read_bytes():
+                      raise SystemExit(f"Source archive differs from checked-out {relative}")
+              for name, member in members.items():
+                  path = PurePosixPath(name)
+                  lowered = name.lower()
+                  if not (member.isfile() or member.isdir()):
+                      raise SystemExit(f"Source archive contains a non-regular entry: {name}")
+                  if any(part in {"ROMS", "dist", "test-results", "artifacts"} for part in path.parts):
+                      raise SystemExit(f"Source archive contains generated/local data: {name}")
+                  if lowered.endswith((".iso", ".rap", ".vmc", ".vme", ".pkg", ".bin.enc", ".key")):
+                      raise SystemExit(f"Source archive contains a prohibited media/support file: {name}")
+
+          app = root / "dist/PS2 Classics for Mac.app"
+          info = plistlib.loads((app / "Contents/Info.plist").read_bytes())
+          binary_paths = (
+              app / "Contents/MacOS/PS2ClassicsApp",
+              app / "Contents/Helpers/ps2-convert",
+              app / "Contents/Helpers/ps2-at3",
+              root / "dist/ps2-inspect",
+              root / "dist/ps2-build",
+              root / "dist/ps2-convert",
+          )
+          binary_architectures = {}
+          for binary in binary_paths:
+              architectures = subprocess.check_output(["lipo", "-archs", str(binary)], text=True).split()
+              if not {"arm64", "x86_64"}.issubset(architectures):
+                  raise SystemExit(f"{binary} is not Universal: {architectures}")
+              binary_architectures[str(binary.relative_to(root))] = architectures
+
+          release = json.loads((root / "release.json").read_text())
+          def sha256(path):
+              digest = hashlib.sha256()
+              with path.open("rb") as stream:
+                  for block in iter(lambda: stream.read(1024 * 1024), b""):
+                      digest.update(block)
+              return digest.hexdigest()
+
+          manifest = {
+              "artifactKind": "development-preview",
+              "releaseAcceptance": "not assessed by this workflow",
+              "hardwareAcceptance": "open; this workflow does not exercise client Macs or a PS3/HEN console",
+              "createdAtUTC": datetime.now(timezone.utc).isoformat(),
+              "source": {
+                  "repository": os.environ["GITHUB_REPOSITORY"],
+                  "commit": os.environ["GITHUB_SHA"],
+                  "ref": os.environ["GITHUB_REF"],
+                  "archive": source_archive.name,
+                  "sha256": sha256(source_archive),
+              },
+              "workflow": {
+                  "name": "macOS development preview",
+                  "trigger": "workflow_dispatch",
+                  "runId": os.environ["GITHUB_RUN_ID"],
+                  "runAttempt": os.environ["GITHUB_RUN_ATTEMPT"],
+                  "runnerLabel": os.environ["BUILD_RUNNER"],
+                  "runnerArchitecture": os.environ["RUNNER_ARCH"],
+                  "macOS": subprocess.check_output(["sw_vers", "-productVersion"], text=True).strip(),
+                  "xcode": subprocess.check_output(["xcodebuild", "-version"], text=True).splitlines()[0],
+                  "swift": subprocess.check_output(["swift", "--version"], text=True).splitlines()[0],
+              },
+              "build": {
+                  "command": "bash scripts/build-app.sh",
+                  "embeddedReleaseMetadata": {
+                      "version": release["shortVersion"],
+                      "build": release["build"],
+                      "label": release["label"],
+                  },
+                  "minimumMacOS": info["LSMinimumSystemVersion"],
+                  "bundleIdentifier": info["CFBundleIdentifier"],
+                  "previewDisplayName": info["CFBundleDisplayName"],
+                  "releaseJSONOverridden": False,
+                  "bundleDisplayNameOverridden": True,
+                  "binaryArchitectures": binary_architectures,
+                  "checksRun": [
+                      "Universal app and bundled helper build",
+                      "swift test with PS2_TEST_AT3_HELPER set",
+                      "synthetic scripts/test-backend.py",
+                      "synthetic scripts/test-extra-formats.py",
+                      "synthetic scripts/test-package-workflow.py",
+                  ],
+                  "strictReleaseGate": "not run",
+                  "signingAndNotarization": "not attempted",
+              },
+              "preview": {
+                  "archive": preview_zip.name,
+                  "sha256": sha256(preview_zip),
+              },
+          }
+          manifest_path = artifacts / "development-preview-manifest.json"
+          manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+          sums = artifacts / "SHA256SUMS.txt"
+          sums.write_text(
+              f"{sha256(preview_zip)}  {preview_zip.name}\n"
+              f"{sha256(source_archive)}  {source_archive.name}\n"
+              f"{sha256(manifest_path)}  {manifest_path.name}\n"
+          )
+          print(json.dumps(manifest, indent=2))
+          PY
+
+      - name: Upload the development preview and matching evidence
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: ps2-classics-macos-development-preview-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            artifacts/PS2-Classics-for-Mac-development-preview-*.zip
+            artifacts/ps2-classics-macos-source.tar.gz
+            artifacts/development-preview-manifest.json
+            artifacts/SHA256SUMS.txt
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30

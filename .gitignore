@@ -49,3 +49,24 @@ __pycache__/
 *.ps2project
 *.report.json
 CONFIG-*/
+
+# Local artwork, audio and memory-card support files are never source inputs.
+/Art/
+/nolf.mp3
+/virtual memory cards/
+*.mp3
+*.m4a
+*.aac
+*.flac
+*.wav
+*.aiff
+*.aif
+*.jpg
+*.jpeg
+*.png
+*.webp
+*.gif
+*.mov
+*.mp4
+*.mkv
+*.webm

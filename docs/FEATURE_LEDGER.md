@@ -1,10 +1,32 @@
-# Feature ledger — PS2 Classics for Mac 1.0 RC22
+# Feature ledger — PS2 Classics for Mac 1.0 RC24 (build 33)
 
 This ledger is deliberately honest about what is **implemented and tested**,
 what is **experimental**, and what is **deferred with a concrete prerequisite**.
 A deferred optional feature is not an unresolved defect in an advertised
 capability; those deferred features remain outside the advertised scope. No placeholder or disabled
 buttons are added for work that is not done.
+
+## Super Slim / HEN batch export — RC23 baseline, RC24 hardening
+
+RC23 introduced this feature. Its historical count is 31 new tests (18 exporter, 10 session, 3 ROM), correcting the release-note count of 30. The RC23 cancellation evidence was a pre-cancel run, not a mid-job cancellation. CONFIG mutation during conversion was not proven until the RC24 fix. RC23 full real synthetic conversion receipt remains valid. RC24's strict gate passed 16 checks; full four-ROM conversion was not repeated; its four-ROM read-only preflight receipt passed with source hashes unchanged.
+
+| Area | Change | Evidence |
+| --- | --- | --- |
+| Whole-batch preflight | Every ISO, key, CONFIG, output path and destination capacity checked before the first conversion; duplicate sources, duplicate game IDs and folder collisions rejected | `HENBatchExporterTests` (18 cases) |
+| Two-step review | Check batch never converts; Start batch is a separate action and any edit discards the review | `HENBatchExporterTests`; reviewed per-game list in the UI |
+| Source, key and CONFIG integrity | RC23 evidence covered checks between review and job; RC24 binds the full ISO SHA-256 to the reviewed preflight and checks it before each conversion, rejects key symlinks, and rechecks CONFIG after conversion | RC23 targeted tests; RC24 four-ROM preflight receipt passed (real four-ROM conversion was not repeated in RC24; synthetic helper tests passed) |
+| Publication | Private staging folder plus an exclusive atomic folder rename; a failure or cancel leaves nothing that looks finished, and cleanup failure is reported honestly | `testFailedExportLeavesNoStagedFolderAndNothingComplete`, `testRealExportPublishesVerifiedFolderAndRefusesRerun` |
+| Verified images | Every image verified with the bundled helper and confirmed to be the base `ISO.BIN.ENC` profile before it is shown ready | `testRealBatchConvertsEachDiscIndependently`; `inspect-encrypted` on all four real images |
+| Queue persistence and retry | Queue saved atomically and restored; an interrupted conversion becomes explicitly `Interrupted`, a vanished published folder is demoted, a preflight approval does not outlive its session | `HENBatchSessionTests` (10 cases) |
+| Console path layout | Optional `Ready for Super Slim/dev_hdd0/PS2ISO` nesting; folder arrangement only, no transfer and no stored credentials | `testNamesUseTheWebMANBracketFormAndLayoutIsOptional` |
+| Real-image batch | CD-sized 4x4 Evo 2, DVD9 Xenosaga Episode 1 and both Xenosaga Episode 2 discs encrypted, verified and published read-only; cancellation evidence is pre-cancel only | `test-results/hen-batch-real.json` (synthetic key) |
+
+**Not established for this feature:** console appearance, launch and behaviour on a HEN Super Slim; whether the folder layout is recognised by webMAN MOD on hardware; any multi-disc or disc-switching behaviour. Raw `.iso` remains CFW-only and this page creates no PKGs.
+
+| Preflight identity and post-conversion CONFIG | RC24 binds each reviewed ISO to its full SHA-256 and checks before conversion; CONFIG is checked after conversion | `test-results/hen-batch-preflight-regression.json` passed read-only on four ROMs; strict gate passed; real four-ROM conversion not repeated in RC24 |
+| Queue/session safety | Damaged saved queues are write-locked; published rows stay out of new preflight; restored Published rows require a real output directory with nonempty regular `.BIN.ENC` and selected CONFIG sidecar, else demote to Interrupted | RC24 session regressions; full Swift suite passed (261 tests) |
+| Cancel, retry and interface | Correct cancellation classification/token ownership; Retry clears stale plan before recheck; folder reveal and generic quit prompt | RC24 regression/UI changes; full Swift suite passed (261 tests) |
+| Test-helper safety | Resolves helper path; refuses existing report files and destinations inside ROMS; requires actual parsed markers | `scripts/test-hen-batch.py`; strict gate passed 16/16 |
 
 ## Implemented and tested locally (RC22 report findings)
 
