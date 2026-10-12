@@ -30,9 +30,10 @@ jobs:
       - name: Build the Universal macOS preview
         run: bash scripts/build-app.sh
 
-      - name: Run Swift tests with the bundled ATRAC3 helper
+      - name: Run Swift tests with bundled helpers
         env:
           PS2_TEST_AT3_HELPER: ${{ github.workspace }}/dist/ps2-at3
+          PS2_TEST_HELPER: ${{ github.workspace }}/dist/ps2-convert
         run: swift test
 
       - name: Run synthetic native-helper regressions
@@ -170,7 +171,7 @@ jobs:
                   "binaryArchitectures": binary_architectures,
                   "checksRun": [
                       "Universal app and bundled helper build",
-                      "swift test with PS2_TEST_AT3_HELPER set",
+                      "swift test with bundled conversion and ATRAC3 helpers",
                       "synthetic scripts/test-backend.py",
                       "synthetic scripts/test-extra-formats.py",
                       "synthetic scripts/test-package-workflow.py",

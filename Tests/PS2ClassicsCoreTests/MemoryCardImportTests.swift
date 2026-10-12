@@ -497,7 +497,11 @@ final class MemoryCardImportTests: XCTestCase {
         // FAT reads, writes and chain validation (full-size geometry, so the
         // helper round trip runs too).
         let helper = try helper()
-        let big = Data((0..<300 * 1024).map { UInt8(($0 * 31 + 7) % 256) })
+        let bigByteCount = 300 * 1024
+        let bigBytes: [UInt8] = (0..<bigByteCount).map { value in
+            UInt8((value * 31 + 7) % 256)
+        }
+        let big = Data(bigBytes)
         let cardA = Self.build(saves: [("BASLUS-12345GAMEDATA", [("big.bin", big)]),
                                        ("BESLES-54321EMPTY", [])],
                                clusters: 8192, alloc: 41)
