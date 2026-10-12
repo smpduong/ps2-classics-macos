@@ -20,6 +20,14 @@ public enum SoftwareManual {
             let r = Int((colour >> 11) & 31), g = Int((colour >> 5) & 63), b = Int(colour & 31)
             return [(r << 3) | (r >> 2), (g << 2) | (g >> 4), (b << 3) | (b >> 2)]
         }
+        func squaredRGBDistance(_ lhs: [Int], _ rhs: [Int]) -> Int {
+            var distance = 0
+            for channel in 0..<3 {
+                let difference = lhs[channel] - rhs[channel]
+                distance += difference * difference
+            }
+            return distance
+        }
         for by in stride(from: 0, to: height, by: 4) {
             try cancelled()
             for bx in stride(from: 0, to: width, by: 4) {
@@ -39,9 +47,8 @@ public enum SoftwareManual {
                 let palette = [ca, cb, (0..<3).map { (2*ca[$0]+cb[$0])/3 }, (0..<3).map { (ca[$0]+2*cb[$0])/3 }]
                 var indices: UInt32 = 0
                 for (i,c) in colours.enumerated() {
-                    let index = (0..<4).min { l,r in
-                        (0..<3).reduce(0) { $0 + (c[$1]-palette[l][$1]) * (c[$1]-palette[l][$1]) } <
-                        (0..<3).reduce(0) { $0 + (c[$1]-palette[r][$1]) * (c[$1]-palette[r][$1]) }
+                    let index = (0..<4).min { left, right in
+                        squaredRGBDistance(c, palette[left]) < squaredRGBDistance(c, palette[right])
                     }!
                     indices |= UInt32(index) << (i*2)
                 }
