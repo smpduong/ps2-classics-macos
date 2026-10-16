@@ -67,7 +67,7 @@ project restores that project's own settings.
 
 ## Before distributing
 
-This build is **1.0 RC24 (build 33), a release candidate**. Its four-ROM read-only preflight passed; full RC24 conversion and strict-gate results are pending. External acceptance gates in [CLIENT_ACCEPTANCE_CHECKLIST.md](CLIENT_ACCEPTANCE_CHECKLIST.md) are still open. It is ad hoc signed for local testing, not Developer ID signed or notarized. Cross-compiled Intel code has not been executed on the client's Monterey MacBook Air. Before an external 1.0 release: test that machine, the M4 mini and the target PS3; complete signing/notarization. The approved public license is GPL-3.0-only; distribute the exact matching source archive with binary releases. Third-party license notices are included in the bundle.
+This build is **1.0 RC24 (build 33), a release candidate**; development is parked while client testing remains pending. Its four-ROM read-only preflight passed; a full four-ROM conversion was not repeated in RC24. The historical strict RC24 gate passed 16 checks. External acceptance gates in [CLIENT_ACCEPTANCE_CHECKLIST.md](CLIENT_ACCEPTANCE_CHECKLIST.md) remain open. It is ad hoc signed for local testing, not Developer ID signed or notarized. Cross-compiled Intel code has not been executed on the client's Monterey MacBook Air. Before an external 1.0 release, test that machine, the M4 mini and the target PS3, then complete signing/notarization. The approved public license is GPL-3.0-only; distribute the exact matching source archive with binary releases. Third-party license notices are included in the bundle.
 
 ## Audio and destination safeguards
 

@@ -1,17 +1,17 @@
 # Windows development handoff
 
-This repository contains the source for **PS2 Classics for Mac 1.0 RC24 (build 33)**. It is a native macOS application. Windows can be used to inspect, edit, and version the source, but this project does not promise a Windows application or a Windows build of the SwiftUI and AppKit targets.
+Development is parked at **PS2 Classics for Mac 1.0 RC24 (build 33)** while client testing remains pending. This is not a finished 1.0 release. Resume from the repository's current history and preserve all later changes; do not reset to an older candidate. This is a native macOS application. Windows can be used to inspect, edit, and version the source, but this project does not promise a Windows application or a Windows build of the SwiftUI and AppKit targets.
 
 ## Clone and review
 
-Clone the private repository from PowerShell:
+Clone the public repository from PowerShell:
 
 ```powershell
 git clone https://github.com/smpduong/ps2-classics-macos.git
 cd ps2-classics-macos
 ```
 
-GitHub will prompt you to authenticate if your saved credentials are not available. Do not commit local game images, memory cards, licensing/support files, keys, generated packages, test outputs, or personal paths and logs.
+Cloning the public repository does not require authentication. GitHub authentication and repository write access are needed to push changes or dispatch the development-preview workflow. Do not commit local game images, memory cards, licensing/support files, keys, generated packages, test outputs, or personal paths and logs.
 
 ## Build requirements
 
@@ -37,9 +37,9 @@ The strict release gate is `bash scripts/validate-release.sh`. It requires CMake
 
 ## Evidence and open acceptance gates
 
-The current release metadata identifies RC24/build 33. The project records a historical strict RC24 gate with 16 checks and a historical full suite of 224 core plus 37 app tests. Those results describe the recorded macOS run and do not establish a Windows build. No new verification was performed as part of preparing this handoff.
+The current release metadata identifies RC24/build 33. A [GitHub macOS development-preview run for commit `7fd5805`](https://github.com/smpduong/ps2-classics-macos/actions/runs/38207025920) succeeded; that preview ran its documented CI checks and does not establish client or console acceptance. The project also records a historical strict RC24 gate with 16 checks and a historical full suite of 224 core plus 37 app tests. Those results describe the recorded macOS run and do not establish a Windows build.
 
-Actual PS3 installation, launch, save/load, multi-disc behavior, Intel Monterey and M4 client runs, external-volume interruption behavior, and Developer ID signing/notarization remain open acceptance gates. The client response is not recorded as received in the project materials. Keep these gates open until evidence from the relevant hardware and release process is recorded.
+Actual PS3 installation, launch, save/load, multi-disc behavior, client testing, external-volume interruption behavior, and Developer ID signing/notarization remain open acceptance gates. Keep these gates open until evidence from the relevant hardware and release process is recorded.
 
 ## Codex delegation preference
 
